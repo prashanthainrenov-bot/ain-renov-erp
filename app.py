@@ -135,7 +135,7 @@ def init_db():
 
 init_db()
 
-# --- HELPER FUNCTIONS FOR DATABASE Operations ---
+# --- DATABASE HELPER FUNCTIONS ---
 def load_db_table(table_name):
     conn = get_connection()
     df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
@@ -289,7 +289,7 @@ nav = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.subheader("📥 Data Uploader")
 
-# Financial Upload
+# 1. Financial Ledger Upload
 up_fin = st.sidebar.file_uploader("Upload Financial Ledger (.xlsx)", type=["xlsx"])
 if up_fin and st.sidebar.button("Process & Save Financial File"):
     try:
@@ -334,12 +334,73 @@ if up_fin and st.sidebar.button("Process & Save Financial File"):
 
         conn.commit()
         conn.close()
-        st.sidebar.success("Financial File saved and distributed across modules!")
+        st.sidebar.success("Financial file saved!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing financial file: {e}")
 
-# Vendor Upload
+# 2. Quotation Format Upload
+up_q = st.sidebar.file_uploader("Upload Quotations (.xlsx)", type=["xlsx"])
+if up_q and st.sidebar.button("Process & Save Quotations File"):
+    try:
+        df_q = pd.read_excel(up_q).fillna('')
+        conn = get_connection()
+        c = conn.cursor()
+        for idx, r in df_q.iterrows():
+            r_dict = {str(k).strip().upper(): v for k, v in r.to_dict().items()}
+            c.execute('''
+                INSERT INTO quotations (
+                    quotation_id, client_name, project_name, quotation_date,
+                    expected_closure_date, followup_reminder_date, quotation_amount, feedback_status, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                safe_str(r_dict.get("QUOTATION_ID"), f"Q-{idx+100}"),
+                safe_str(r_dict.get("CLIENT_NAME")),
+                safe_str(r_dict.get("PROJECT_NAME")),
+                safe_str(r_dict.get("QUOTATION_DATE"), str(datetime.date.today())),
+                safe_str(r_dict.get("EXPECTED_CLOSURE_DATE"), str(datetime.date.today())),
+                safe_str(r_dict.get("FOLLOWUP_REMINDER_DATE"), str(datetime.date.today())),
+                safe_float(r_dict.get("QUOTATION_AMOUNT")),
+                safe_str(r_dict.get("FEEDBACK_STATUS"), "In Process"),
+                safe_str(r_dict.get("NOTES"))
+            ))
+        conn.commit()
+        conn.close()
+        st.sidebar.success("Quotations file saved!")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Error processing quotation file: {e}")
+
+# 3. Petty Cash Template Upload
+up_pc = st.sidebar.file_uploader("Upload Petty Cash (.xlsx)", type=["xlsx"])
+if up_pc and st.sidebar.button("Process & Save Petty Cash File"):
+    try:
+        df_pc = pd.read_excel(up_pc).fillna('')
+        conn = get_connection()
+        c = conn.cursor()
+        for idx, r in df_pc.iterrows():
+            r_dict = {str(k).strip().upper(): v for k, v in r.to_dict().items()}
+            c.execute('''
+                INSERT INTO petty_cash (sl_no, date, voucher_no, description, cash_in, cash_out, balance, remarks)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                safe_int(r_dict.get("SL NO") or r_dict.get("SL_NO"), idx + 1),
+                safe_str(r_dict.get("DATE"), str(datetime.date.today())),
+                safe_str(r_dict.get("VOUCHER NO") or r_dict.get("VOUCHER_NO"), f"PCV-{idx+1}"),
+                safe_str(r_dict.get("DESCRIPTION")),
+                safe_float(r_dict.get("CASH IN") or r_dict.get("CASH_IN")),
+                safe_float(r_dict.get("CASH OUT") or r_dict.get("CASH_OUT")),
+                safe_float(r_dict.get("BALANCE")),
+                safe_str(r_dict.get("REMARKS"))
+            ))
+        conn.commit()
+        conn.close()
+        st.sidebar.success("Petty Cash file saved!")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Error processing petty cash file: {e}")
+
+# 4. Vendor Template Upload
 up_v = st.sidebar.file_uploader("Upload Vendor Bills (.xlsx)", type=["xlsx"])
 if up_v and st.sidebar.button("Process & Save Vendor File"):
     try:
@@ -362,7 +423,7 @@ if up_v and st.sidebar.button("Process & Save Vendor File"):
             ))
         conn.commit()
         conn.close()
-        st.sidebar.success("Vendor details stored!")
+        st.sidebar.success("Vendor file saved!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing vendor file: {e}")
@@ -665,7 +726,6 @@ elif nav == "Project-Wise Analysis":
         proj_info = df_p[df_p["project_name"] == sel_proj].iloc[0]
         st.subheader(f"Project Overview: {sel_proj} (Client: {proj_info.get('client_name', 'N/A')})")
         
-        # Link project transactions from financials
         p_fin = df_fin[df_fin["particulars"].str.upper().str.contains(sel_proj.upper(), na=False)] if not df_fin.empty else pd.DataFrame()
         
         p_rev = p_fin["income_net"].sum() if not p_fin.empty else 0.0
@@ -755,7 +815,6 @@ elif nav == "Vendor Payments & Ageing":
         today = pd.to_datetime(datetime.date.today())
         df_vp["days_overdue"] = (today - df_vp["due_dt"]).dt.days
         
-        # Calculate Ageing Brackets
         df_vp["Ageing Bucket"] = "Current"
         df_vp.loc[(df_vp["days_overdue"] > 0) & (df_vp["days_overdue"] <= 30), "Ageing Bucket"] = "1 - 30 Days"
         df_vp.loc[(df_vp["days_overdue"] > 30) & (df_vp["days_overdue"] <= 60), "Ageing Bucket"] = "31 - 60 Days"
