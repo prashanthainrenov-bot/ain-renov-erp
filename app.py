@@ -1,6 +1,5 @@
 import io
 import datetime
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -93,12 +92,12 @@ def generate_financial_template():
                 "PAYMENT DATE": "2026-01-20",
                 "BILL/ INVOICE NUMBER": "INV-1001",
                 "PARTICULARS": "A/C Maintenance Advance Payment",
-                "INCOME_AMOUNT": 10000.0,
-                "INCOME_VAT": 500.0,
-                "INCOME_NET": 10500.0,
-                "EXPENSE_AMOUNT": 0.0,
-                "EXPENSE_VAT": 0.0,
-                "EXPENSE_NET": 0.0,
+                "Capital/ Income": 10000.0,
+                "VAT": 500.0,
+                "NET AMOUNT": 10500.0,
+                "Expenses": 0.0,
+                "VAT.1": 0.0,
+                "Net Amount": 0.0,
             },
             {
                 "SL NO": 2,
@@ -107,12 +106,12 @@ def generate_financial_template():
                 "PAYMENT DATE": "2026-01-18",
                 "BILL/ INVOICE NUMBER": "EXP-5021",
                 "PARTICULARS": "SALARY PAID TO PRAMOTH",
-                "INCOME_AMOUNT": 0.0,
-                "INCOME_VAT": 0.0,
-                "INCOME_NET": 0.0,
-                "EXPENSE_AMOUNT": 3500.0,
-                "EXPENSE_VAT": 0.0,
-                "EXPENSE_NET": 3500.0,
+                "Capital/ Income": 0.0,
+                "VAT": 0.0,
+                "NET AMOUNT": 0.0,
+                "Expenses": 3500.0,
+                "VAT.1": 0.0,
+                "Net Amount": 3500.0,
             },
         ]
     )
@@ -137,7 +136,7 @@ def generate_project_template():
     )
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df_temp.to_excel(writer, index=False, sheet_name="Projects")
+        df_temp.to_excel(writer, index=False, sheet_name="Our Profit and Pending Payments")
     return buffer.getvalue()
 
 
@@ -203,7 +202,8 @@ def load_financial_data(file):
 def load_project_data(file):
     try:
         xls = pd.ExcelFile(file)
-        if "Our Profit and Pending Payments" in xls.sheet_names:
+        sheet_names = xls.sheet_names
+        if "Our Profit and Pending Payments" in sheet_names:
             df = pd.read_excel(
                 xls, sheet_name="Our Profit and Pending Payments", skiprows=1
             )
@@ -272,9 +272,10 @@ if nav == "Overview":
 
 # --- MODULE 2: DATA MANAGEMENT & TEMPLATES ---
 elif nav == "Data Management & Templates":
-    st.title("📥 Download Templates & Enter New Data")
+    st.title("📥 Fill-Up Templates & Enter New Data")
 
-    st.markdown("### 1. Download Standard Excel Templates")
+    st.markdown("### 1. Download Standard Data Template Files")
+    st.caption("Download these structured templates, fill in your operational data, and re-upload via the sidebar.")
     t_col1, t_col2, t_col3 = st.columns(3)
     with t_col1:
         st.download_button(
@@ -299,56 +300,94 @@ elif nav == "Data Management & Templates":
         )
 
     st.markdown("---")
-    st.markdown("### 2. Enter New Financial Transaction Directly")
+    st.markdown("### 2. Add New Entry Directly To Active Session")
 
-    with st.form("add_financial_entry"):
-        st.subheader("New Financial Entry")
-        f_col1, f_col2, f_col3 = st.columns(3)
+    tab_fin, tab_proj = st.tabs(["Add Financial Record", "Add Project Record"])
 
-        with f_col1:
-            f_type = st.selectbox("Transaction Type", ["Expense", "Income"])
-            f_date = st.date_input("Transaction Date")
-            f_inv = st.text_input("Bill / Invoice Number", "INV-")
+    with tab_fin:
+        with st.form("add_financial_entry"):
+            st.subheader("New Financial Transaction")
+            f_col1, f_col2, f_col3 = st.columns(3)
 
-        with f_col2:
-            f_part = st.text_input(
-                "Particulars / Description", "e.g., SALARY PAID TO PRAMOTH"
-            )
-            f_amt = st.number_input(
-                "Amount (Excl. VAT in AED)", min_value=0.0, value=0.0
-            )
+            with f_col1:
+                f_type = st.selectbox("Transaction Type", ["Expense", "Income"])
+                f_date = st.date_input("Transaction Date")
+                f_inv = st.text_input("Bill / Invoice Number", "INV-")
 
-        with f_col3:
-            f_vat = f_amt * 0.05
-            st.write(f"**Calculated 5% VAT:** AED {f_vat:,.2f}")
-            f_net = f_amt + f_vat
-            st.write(f"**Total Net Amount:** AED {f_net:,.2f}")
+            with f_col2:
+                f_part = st.text_input(
+                    "Particulars / Description", "e.g., SALARY PAID TO PRAMOTH"
+                )
+                f_amt = st.number_input(
+                    "Amount (Excl. VAT in AED)", min_value=0.0, value=0.0
+                )
 
-        submit_fin = st.form_submit_button("Add Transaction to Ledger")
+            with f_col3:
+                f_vat = f_amt * 0.05
+                st.write(f"**Calculated 5% VAT:** AED {f_vat:,.2f}")
+                f_net = f_amt + f_vat
+                st.write(f"**Total Net Amount:** AED {f_net:,.2f}")
 
-        if submit_fin:
-            new_row = {
-                "SL NO": len(st.session_state.financial_data) + 1,
-                "YES/NO": "YES",
-                "DATE": pd.to_datetime(f_date),
-                "PAYMENT DATE": pd.to_datetime(f_date),
-                "BILL/ INVOICE NUMBER": f_inv,
-                "PARTICULARS": f_part,
-                "INCOME_AMOUNT": f_amt if f_type == "Income" else 0.0,
-                "INCOME_VAT": f_vat if f_type == "Income" else 0.0,
-                "INCOME_NET": f_net if f_type == "Income" else 0.0,
-                "EXPENSE_AMOUNT": f_amt if f_type == "Expense" else 0.0,
-                "EXPENSE_VAT": f_vat if f_type == "Expense" else 0.0,
-                "EXPENSE_NET": f_net if f_type == "Expense" else 0.0,
-            }
-            st.session_state.financial_data = pd.concat(
-                [
-                    st.session_state.financial_data,
-                    pd.DataFrame([new_row]),
-                ],
-                ignore_index=True,
-            )
-            st.success("Financial entry saved successfully!")
+            submit_fin = st.form_submit_button("Add Transaction to Ledger")
+
+            if submit_fin:
+                new_row = {
+                    "SL NO": len(st.session_state.financial_data) + 1,
+                    "YES/NO": "YES",
+                    "DATE": pd.to_datetime(f_date),
+                    "PAYMENT DATE": pd.to_datetime(f_date),
+                    "BILL/ INVOICE NUMBER": f_inv,
+                    "PARTICULARS": f_part,
+                    "INCOME_AMOUNT": f_amt if f_type == "Income" else 0.0,
+                    "INCOME_VAT": f_vat if f_type == "Income" else 0.0,
+                    "INCOME_NET": f_net if f_type == "Income" else 0.0,
+                    "EXPENSE_AMOUNT": f_amt if f_type == "Expense" else 0.0,
+                    "EXPENSE_VAT": f_vat if f_type == "Expense" else 0.0,
+                    "EXPENSE_NET": f_net if f_type == "Expense" else 0.0,
+                }
+                st.session_state.financial_data = pd.concat(
+                    [
+                        st.session_state.financial_data,
+                        pd.DataFrame([new_row]),
+                    ],
+                    ignore_index=True,
+                )
+                st.success("Financial entry saved successfully!")
+
+    with tab_proj:
+        with st.form("add_project_entry"):
+            st.subheader("New Project Record")
+            p_col1, p_col2 = st.columns(2)
+
+            with p_col1:
+                p_name = st.text_input("Project Name", "")
+                p_val = st.number_input("Project Value (Excl. VAT in AED)", min_value=0.0, value=0.0)
+
+            with p_col2:
+                p_vat = p_val * 0.05
+                p_tot = p_val + p_vat
+                st.write(f"**Calculated 5% VAT:** AED {p_vat:,.2f}")
+                st.write(f"**Total Contract Value:** AED {p_tot:,.2f}")
+
+            submit_proj = st.form_submit_button("Add Project Record")
+
+            if submit_proj:
+                new_proj_row = {
+                    "SL_NO": len(st.session_state.project_data) + 1,
+                    "Project_Name": p_name,
+                    "Project_Value": p_val,
+                    "VAT": p_vat,
+                    "Total_Amount": p_tot,
+                    "Status": "Active",
+                }
+                st.session_state.project_data = pd.concat(
+                    [
+                        st.session_state.project_data,
+                        pd.DataFrame([new_proj_row]),
+                    ],
+                    ignore_index=True,
+                )
+                st.success("Project record saved successfully!")
 
 
 # --- MODULE 3: P&L & FINANCIALS (YOY ANALYSIS) ---
@@ -360,7 +399,7 @@ elif nav == "P&L & Financials (YoY Analysis)":
     if not df_fin.empty and "DATE" in df_fin.columns:
         df_fin["Year"] = df_fin["DATE"].dt.year
         available_years = sorted(
-            [int(y) for y in df_fin["Year"].dropna().unique()]
+            [int(y) for y in df_fin["Year"].dropna().unique() if y >= 2024]
         )
 
         if len(available_years) > 0:
@@ -413,60 +452,95 @@ elif nav == "P&L & Financials (YoY Analysis)":
             st.dataframe(monthly, use_container_width=True)
             st.dataframe(df_curr, use_container_width=True)
         else:
-            st.warning("No valid date transactions found.")
+            st.warning("No valid date transactions found for 2024 onwards.")
     else:
         st.warning("Upload financial records or add entries in 'Data Management & Templates'.")
 
 
 # --- MODULE 4: VAT & CORPORATE TAX COMPLIANCE ---
 elif nav == "VAT & Corporate Tax Compliance":
-    st.title("UAE VAT & Corporate Tax Compliance")
+    st.title("UAE VAT & Corporate Tax Compliance (2024 Onwards)")
 
     df_fin = st.session_state.financial_data.copy()
-    tab1, tab2 = st.columns(2)
+    tab1, tab2 = st.tabs(["1. Corporate Tax Assessment (Jan–Dec)", "2. VAT Quarter-on-Quarter Returns"])
 
     with tab1:
-        st.subheader("1. Corporate Tax Assessment (Jan to Dec)")
-        st.caption("Standard UAE Tax Period: Jan 1 – Dec 31 (9% rate on net profit exceeding AED 375,000)")
+        st.subheader("Corporate Tax Assessment (Jan 1 to Dec 31)")
+        st.caption("Standard UAE Corporate Tax Period: Jan 1 – Dec 31 (9% tax on net profit exceeding AED 375,000)")
 
         if not df_fin.empty and "DATE" in df_fin.columns:
-            years = sorted([int(y) for y in df_fin["DATE"].dt.year.dropna().unique()])
-            tax_year = st.selectbox("Select Corporate Tax Year", years, index=len(years) - 1 if years else 0)
+            years = sorted([int(y) for y in df_fin["DATE"].dt.year.dropna().unique() if y >= 2024])
+            if years:
+                tax_year = st.selectbox("Select Corporate Tax Year", years, index=len(years) - 1)
 
-            df_tax = df_fin[df_fin["DATE"].dt.year == tax_year]
-            tot_inc_tax = df_tax["INCOME_AMOUNT"].sum()
-            tot_exp_tax = df_tax["EXPENSE_AMOUNT"].sum()
-            net_taxable_income = tot_inc_tax - tot_exp_tax
+                df_tax = df_fin[df_fin["DATE"].dt.year == tax_year]
+                tot_inc_tax = df_tax["INCOME_AMOUNT"].sum()
+                tot_exp_tax = df_tax["EXPENSE_AMOUNT"].sum()
+                net_taxable_income = tot_inc_tax - tot_exp_tax
 
-            tax_threshold = 375000.0
-            taxable_amount = max(0.0, net_taxable_income - tax_threshold)
-            corp_tax_payable = taxable_amount * 0.09
+                tax_threshold = 375000.0
+                taxable_amount = max(0.0, net_taxable_income - tax_threshold)
+                corp_tax_payable = taxable_amount * 0.09
 
-            st.write(f"**Total Revenue:** AED {tot_inc_tax:,.2f}")
-            st.write(f"**Total Expenses:** AED {tot_exp_tax:,.2f}")
-            st.write(f"**Net Profit Before Tax:** AED {net_taxable_income:,.2f}")
-            st.metric("Corporate Tax Payable (9%)", f"AED {corp_tax_payable:,.2f}")
+                st.write(f"**Total Gross Revenue:** AED {tot_inc_tax:,.2f}")
+                st.write(f"**Total Gross Expenses:** AED {tot_exp_tax:,.2f}")
+                st.write(f"**Net Profit Before Tax:** AED {net_taxable_income:,.2f}")
+                st.metric("Corporate Tax Payable (9%)", f"AED {corp_tax_payable:,.2f}")
+            else:
+                st.info("No tax records available from 2024 onwards.")
 
     with tab2:
-        st.subheader("2. Quarterly VAT Return (June to August Quarter)")
-        st.caption("FTA Specific Filing Period: June 1 – August 31")
+        st.subheader("Quarter-on-Quarter VAT Returns")
+        st.caption("Quarterly VAT Filing options including June–August custom FTA quarter.")
 
         if not df_fin.empty and "DATE" in df_fin.columns:
-            vat_years = sorted([int(y) for y in df_fin["DATE"].dt.year.dropna().unique()])
-            vat_year = st.selectbox("Select VAT Return Year", vat_years, index=len(vat_years) - 1 if vat_years else 0)
+            vat_years = sorted([int(y) for y in df_fin["DATE"].dt.year.dropna().unique() if y >= 2024])
+            if vat_years:
+                v_col1, v_col2 = st.columns(2)
+                with v_col1:
+                    vat_year = st.selectbox("Select Tax Year", vat_years, index=len(vat_years) - 1, key="vat_yr")
+                with v_col2:
+                    quarter_choice = st.selectbox(
+                        "Select VAT Quarter Period",
+                        [
+                            "June to August Quarter (Jun - Aug)",
+                            "Quarter 1 (Jan - Mar)",
+                            "Quarter 2 (Apr - Jun)",
+                            "Quarter 3 (Jul - Sep)",
+                            "Quarter 4 (Oct - Dec)",
+                        ],
+                    )
 
-            df_vat_q = df_fin[
-                (df_fin["DATE"].dt.year == vat_year)
-                & (df_fin["DATE"].dt.month.isin([6, 7, 8]))
-            ]
+                # Filter dates according to choice
+                if "June to August" in quarter_choice:
+                    months_filter = [6, 7, 8]
+                elif "Quarter 1" in quarter_choice:
+                    months_filter = [1, 2, 3]
+                elif "Quarter 2" in quarter_choice:
+                    months_filter = [4, 5, 6]
+                elif "Quarter 3" in quarter_choice:
+                    months_filter = [7, 8, 9]
+                else:
+                    months_filter = [10, 11, 12]
 
-            output_vat = df_vat_q["INCOME_VAT"].sum() if "INCOME_VAT" in df_vat_q.columns else 0.0
-            input_vat = df_vat_q["EXPENSE_VAT"].sum() if "EXPENSE_VAT" in df_vat_q.columns else 0.0
-            net_vat_due = output_vat - input_vat
+                df_vat_q = df_fin[
+                    (df_fin["DATE"].dt.year == vat_year)
+                    & (df_fin["DATE"].dt.month.isin(months_filter))
+                ]
 
-            st.write(f"**Output VAT Collected (Jun-Aug):** AED {output_vat:,.2f}")
-            st.write(f"**Input VAT Paid (Jun-Aug):** AED {input_vat:,.2f}")
-            st.metric("Net VAT Payable / (Claimable)", f"AED {net_vat_due:,.2f}")
+                output_vat = df_vat_q["INCOME_VAT"].sum() if "INCOME_VAT" in df_vat_q.columns else 0.0
+                input_vat = df_vat_q["EXPENSE_VAT"].sum() if "EXPENSE_VAT" in df_vat_q.columns else 0.0
+                net_vat_due = output_vat - input_vat
+
+                v_m1, v_m2, v_m3 = st.columns(3)
+                v_m1.metric("Output VAT Collected", f"AED {output_vat:,.2f}")
+                v_m2.metric("Input VAT Paid", f"AED {input_vat:,.2f}")
+                v_m3.metric("Net VAT Payable / (Claimable)", f"AED {net_vat_due:,.2f}")
+
+                st.markdown("#### Period Transaction Breakdown")
+                st.dataframe(df_vat_q, use_container_width=True)
+            else:
+                st.info("No VAT records available from 2024 onwards.")
 
 
 # --- MODULE 5: PROJECT PROFITABILITY ---
@@ -488,7 +562,6 @@ elif nav == "Project Profitability":
 elif nav == "Quotation Tracker":
     st.title("📌 Quotation & Proposal Tracker")
 
-    # Form to create new quotation
     with st.form("new_quotation_form"):
         st.subheader("1. Add New Quotation Proposal")
         q_c1, q_c2, q_c3 = st.columns(3)
@@ -517,7 +590,7 @@ elif nav == "Quotation Tracker":
             )
             q_notes = st.text_area("Notes / Follow-up Details", "")
 
-        submit_q = st.form_submit_button("Save Quotation")
+        submit_q = st.form_submit_button("Save Quotation Proposal")
 
         if submit_q:
             new_q_id = f"Q-{len(st.session_state.quotations_data) + 101}"
@@ -542,12 +615,11 @@ elif nav == "Quotation Tracker":
             st.success(f"Quotation {new_q_id} saved successfully!")
 
     st.markdown("---")
-    st.subheader("2. Regular Quotations Pipeline & Status Updates")
+    st.subheader("2. Regular Quotation Pipeline Updates")
 
     df_q = st.session_state.quotations_data
 
     if not df_q.empty:
-        # Display pipeline summary metrics
         q1, q2, q3, q4 = st.columns(4)
         q1.metric("Total Active Proposals", len(df_q))
         q2.metric(
@@ -563,7 +635,7 @@ elif nav == "Quotation Tracker":
             len(df_q[df_q["Feedback_Status"] == "Closed - Lost"]),
         )
 
-        st.markdown("#### Update Existing Quotations")
+        st.markdown("#### Regular Follow-up & Status Editor")
         for idx, row in df_q.iterrows():
             with st.expander(
                 f"{row['Quotation_ID']} | {row['Client_Name']} - {row['Project_Name']} | Status: {row['Feedback_Status']}"
@@ -571,7 +643,7 @@ elif nav == "Quotation Tracker":
                 u_col1, u_col2, u_col3 = st.columns(3)
                 with u_col1:
                     new_status = st.selectbox(
-                        "Update Status",
+                        "Update Feedback Status",
                         ["In Process", "Closed - Won", "Closed - Lost"],
                         index=[
                             "In Process",
@@ -602,9 +674,9 @@ elif nav == "Quotation Tracker":
 
                 with u_col3:
                     new_notes = st.text_area(
-                        "Update Notes", value=str(row["Notes"]), key=f"notes_{idx}"
+                        "Update Follow-up Notes", value=str(row["Notes"]), key=f"notes_{idx}"
                     )
-                    if st.button("Save Updates", key=f"btn_{idx}"):
+                    if st.button("Save Changes", key=f"btn_{idx}"):
                         st.session_state.quotations_data.at[
                             idx, "Feedback_Status"
                         ] = new_status
@@ -631,12 +703,12 @@ elif nav == "Quotation Tracker":
 # --- MODULE 7: STAFF SALARIES TRACKER ---
 elif nav == "Staff Salaries Tracker":
     st.title("💵 Staff Salaries & Payroll Ledger")
-    st.caption("Automatically populated from Salary entries in 'Complete financial data from 2024.xlsx'")
+    st.caption("Automatically populated from salary expense records in your Financial Excel file.")
 
     df_fin = st.session_state.financial_data.copy()
 
     if not df_fin.empty and "PARTICULARS" in df_fin.columns:
-        # Filter rows containing salary keyword in PARTICULARS
+        # Filter salary entries dynamically from financial particulars
         salary_mask = df_fin["PARTICULARS"].astype(str).str.contains(
             "salary|salaries|payroll|wage|staff|pramoth", case=False, na=False
         )
@@ -673,7 +745,7 @@ elif nav == "Staff Salaries Tracker":
         else:
             st.info("No salary entries identified in the uploaded financial ledger.")
     else:
-        st.warning("Please upload 'Complete financial data from 2024.xlsx' to populate staff salary data.")
+        st.warning("Please upload your Financial Excel file to automatically populate staff salary data.")
 
 
 # --- MODULE 8: DOCUMENT GENERATOR ---
