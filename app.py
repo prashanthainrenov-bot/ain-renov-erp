@@ -1,6 +1,6 @@
 import io
-import pandas as pd
 import numpy as np
+import pandas as pd
 import streamlit as st
 
 st.set_page_config(
@@ -9,7 +9,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- INITIALIZE SESSION STATES FOR ENTERING NEW DATA DIRECTLY ---
+# --- INITIALIZE SESSION STATES FOR IN-APP DATA ENTRY ---
 if "financial_data" not in st.session_state:
     st.session_state.financial_data = pd.DataFrame(
         columns=[
@@ -40,7 +40,7 @@ if "project_data" not in st.session_state:
         ]
     )
 
-# --- SIDEBAR NAVIGATION & FILE DOWNLOADS ---
+# --- SIDEBAR NAVIGATION & FILE UPLOADS ---
 st.sidebar.title("Ain Renov ERP System")
 st.sidebar.subheader("Dubai, UAE")
 
@@ -50,8 +50,8 @@ nav = st.sidebar.radio(
     [
         "Overview",
         "Data Management & Templates",
-        "P&L & Financials",
-        "VAT & Corporate Tax",
+        "P&L & Financials (YoY Analysis)",
+        "VAT & Corporate Tax Compliance",
         "Project Profitability",
         "Document Generator (Invoice/LPO)",
         "Quotation & Salary Trackers",
@@ -59,7 +59,7 @@ nav = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("1. Upload Completed Files")
+st.sidebar.subheader("1. Upload Completed Excel Files")
 uploaded_fin = st.sidebar.file_uploader(
     "Upload Financial Excel (.xlsx)", type=["xlsx"]
 )
@@ -199,7 +199,7 @@ def load_project_data(file):
         return pd.DataFrame()
 
 
-# Load user data or sync with uploaded files
+# Load user uploaded data or keep in-session records
 if uploaded_fin:
     st.session_state.financial_data = load_financial_data(uploaded_fin)
 
@@ -209,7 +209,7 @@ if uploaded_proj:
 
 # --- MODULE 1: OVERVIEW ---
 if nav == "Overview":
-    st.title("Ain Renov Technical Services LLC - Dashboard")
+    st.title("Ain Renov Technical Services LLC - Executive Dashboard")
 
     df_fin = st.session_state.financial_data
     df_proj = st.session_state.project_data
@@ -227,27 +227,27 @@ if nav == "Overview":
         )
         net_prof = tot_inc - tot_exp
 
-        col1.metric("Total Income (AED)", f"{tot_inc:,.2f}")
-        col2.metric("Total Expenses (AED)", f"{tot_exp:,.2f}")
-        col3.metric("Net Profit / (Loss)", f"{net_prof:,.2f}")
+        col1.metric("Total Overall Income", f"AED {tot_inc:,.2f}")
+        col2.metric("Total Overall Expenses", f"AED {tot_exp:,.2f}")
+        col3.metric("Overall Net Profit", f"AED {net_prof:,.2f}")
     else:
-        col1.metric("Total Income (AED)", "0.00")
-        col2.metric("Total Expenses (AED)", "0.00")
-        col3.metric("Net Profit / (Loss)", "0.00")
+        col1.metric("Total Overall Income", "AED 0.00")
+        col2.metric("Total Overall Expenses", "AED 0.00")
+        col3.metric("Overall Net Profit", "AED 0.00")
 
     st.markdown("---")
     st.subheader("Project Portfolio Summary")
     if not df_proj.empty:
         st.dataframe(df_proj, use_container_width=True)
     else:
-        st.info("No project data available. Go to 'Data Management & Templates' to add entries or upload an Excel file.")
+        st.info("No active project data found. Go to 'Data Management & Templates' to upload or enter new project records.")
 
 
 # --- MODULE 2: DATA MANAGEMENT & TEMPLATES ---
 elif nav == "Data Management & Templates":
     st.title("📥 Download Templates & Enter New Data")
 
-    st.markdown("### 1. Download Blank Standard Excel Templates")
+    st.markdown("### 1. Download Standard Excel Template Files")
     st.write("Download these templates to get the exact clean column structure required by the app.")
 
     t_col1, t_col2 = st.columns(2)
@@ -267,10 +267,10 @@ elif nav == "Data Management & Templates":
         )
 
     st.markdown("---")
-    st.markdown("### 2. Add New Transaction Directly in App")
+    st.markdown("### 2. Enter New Financial Transaction Directly")
 
     with st.form("add_financial_entry"):
-        st.subheader("New Financial Transaction Form")
+        st.subheader("New Financial Entry")
         f_col1, f_col2, f_col3 = st.columns(3)
 
         with f_col1:
@@ -286,11 +286,11 @@ elif nav == "Data Management & Templates":
 
         with f_col3:
             f_vat = f_amt * 0.05
-            st.write(f"**Auto 5% VAT:** AED {f_vat:,.2f}")
+            st.write(f"**Calculated 5% VAT:** AED {f_vat:,.2f}")
             f_net = f_amt + f_vat
             st.write(f"**Total Net Amount:** AED {f_net:,.2f}")
 
-        submit_fin = st.form_submit_button("Add Financial Entry")
+        submit_fin = st.form_submit_button("Add Transaction to Ledger")
 
         if submit_fin:
             new_row = {
@@ -318,24 +318,24 @@ elif nav == "Data Management & Templates":
 
     st.markdown("---")
     with st.form("add_project_entry"):
-        st.subheader("New Project Registration Form")
+        st.subheader("3. Register New Project Directly")
         p_col1, p_col2 = st.columns(2)
 
         with p_col1:
             p_name = st.text_input("Project Name", "")
             p_val = st.number_input(
-                "Project Contract Value (AED)", min_value=0.0, value=0.0
+                "Project Contract Value (Excl. VAT)", min_value=0.0, value=0.0
             )
 
         with p_col2:
             p_vat = p_val * 0.05
             p_tot = p_val + p_vat
-            st.write(f"**Calculated Total Value (with 5% VAT):** AED {p_tot:,.2f}")
+            st.write(f"**Total Contract Value (incl. 5% VAT):** AED {p_tot:,.2f}")
             p_status = st.selectbox(
                 "Project Status", ["Active", "Completed", "Pending Payment"]
             )
 
-        submit_proj = st.form_submit_button("Add Project Entry")
+        submit_proj = st.form_submit_button("Add Project")
 
         if submit_proj:
             new_proj = {
@@ -350,76 +350,151 @@ elif nav == "Data Management & Templates":
                 [st.session_state.project_data, pd.DataFrame([new_proj])],
                 ignore_index=True,
             )
-            st.success("Project registered successfully!")
+            st.success("Project saved successfully!")
 
 
-# --- MODULE 3: P&L & FINANCIALS ---
-elif nav == "P&L & Financials":
-    st.title("Profit & Loss Statement")
+# --- MODULE 3: P&L & FINANCIALS (YOY ANALYSIS) ---
+elif nav == "P&L & Financials (YoY Analysis)":
+    st.title("Year-over-Year (YoY) Profit & Loss Statement")
 
-    df_fin = st.session_state.financial_data
+    df_fin = st.session_state.financial_data.copy()
 
-    if not df_fin.empty:
-        tot_inc = (
-            df_fin["INCOME_NET"].sum() if "INCOME_NET" in df_fin.columns else 0
+    if not df_fin.empty and "DATE" in df_fin.columns:
+        df_fin["Year"] = df_fin["DATE"].dt.year
+
+        available_years = sorted(
+            [int(y) for y in df_fin["Year"].dropna().unique()]
         )
-        tot_exp = (
-            df_fin["EXPENSE_NET"].sum()
-            if "EXPENSE_NET" in df_fin.columns
-            else 0
-        )
-        net_prof = tot_inc - tot_exp
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Net Income", f"AED {tot_inc:,.2f}")
-        c2.metric("Total Net Expenses", f"AED {tot_exp:,.2f}")
-        c3.metric("Net Profit / (Loss)", f"AED {net_prof:,.2f}")
+        if len(available_years) > 0:
+            selected_year = st.selectbox(
+                "Select Primary Year for P&L", available_years, index=len(available_years) - 1
+            )
 
-        st.subheader("Complete Financial Transactions Ledger")
-        st.dataframe(df_fin, use_container_width=True)
+            # Yearly totals
+            df_curr = df_fin[df_fin["Year"] == selected_year]
+            tot_inc_curr = df_curr["INCOME_NET"].sum()
+            tot_exp_curr = df_curr["EXPENSE_NET"].sum()
+            net_prof_curr = tot_inc_curr - tot_exp_curr
+
+            prev_year = selected_year - 1
+            df_prev = df_fin[df_fin["Year"] == prev_year]
+            tot_inc_prev = df_prev["INCOME_NET"].sum() if not df_prev.empty else 0.0
+            tot_exp_prev = df_prev["EXPENSE_NET"].sum() if not df_prev.empty else 0.0
+            net_prof_prev = tot_inc_prev - tot_exp_prev
+
+            # YoY Comparisons
+            inc_growth = (
+                ((tot_inc_curr - tot_inc_prev) / tot_inc_prev * 100)
+                if tot_inc_prev > 0
+                else 0
+            )
+            prof_growth = (
+                ((net_prof_curr - net_prof_prev) / abs(net_prof_prev) * 100)
+                if net_prof_prev != 0
+                else 0
+            )
+
+            st.markdown(f"### Performance Comparison: {selected_year} vs {prev_year}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Net Income", f"AED {tot_inc_curr:,.2f}", f"{inc_growth:+.1f}% YoY")
+            m2.metric("Net Expenses", f"AED {tot_exp_curr:,.2f}")
+            m3.metric("Net Profit", f"AED {net_prof_curr:,.2f}", f"{prof_growth:+.1f}% YoY")
+
+            st.markdown("---")
+            st.subheader(f"Monthly Breakdown ({selected_year})")
+
+            df_curr["Month_Num"] = df_curr["DATE"].dt.month
+            df_curr["Month"] = df_curr["DATE"].dt.strftime("%b")
+
+            monthly = (
+                df_curr.groupby(["Month_Num", "Month"])[["INCOME_NET", "EXPENSE_NET"]]
+                .sum()
+                .reset_index()
+            )
+            monthly["NET_PROFIT"] = monthly["INCOME_NET"] - monthly["EXPENSE_NET"]
+            monthly = monthly.sort_values("Month_Num").drop(columns=["Month_Num"])
+
+            st.dataframe(monthly, use_container_width=True)
+
+            st.subheader(f"Full Transaction Ledger ({selected_year})")
+            st.dataframe(df_curr, use_container_width=True)
+        else:
+            st.warning("No dated transaction records found. Ensure date column is properly populated.")
     else:
-        st.warning("No financial data found. Upload an Excel file or add entries in 'Data Management & Templates'.")
+        st.warning("Upload financial records or add entries in 'Data Management & Templates'.")
 
 
-# --- MODULE 4: VAT & CORPORATE TAX ---
-elif nav == "VAT & Corporate Tax":
+# --- MODULE 4: VAT & CORPORATE TAX COMPLIANCE ---
+elif nav == "VAT & Corporate Tax Compliance":
     st.title("UAE VAT & Corporate Tax Compliance")
-    st.markdown(
-        "**VAT Filing Quarters:** June to August Schedule | **Corporate Tax Year:** Jan to Dec"
-    )
 
-    df_fin = st.session_state.financial_data
+    df_fin = st.session_state.financial_data.copy()
 
-    if not df_fin.empty:
-        inc_vat = (
-            df_fin["INCOME_VAT"].sum() if "INCOME_VAT" in df_fin.columns else 0
-        )
-        exp_vat = (
-            df_fin["EXPENSE_VAT"].sum() if "EXPENSE_VAT" in df_fin.columns else 0
-        )
-        net_vat = inc_vat - exp_vat
+    tab1, tab2 = st.columns(2)
 
-        v1, v2, v3 = st.columns(3)
-        v1.metric("Output VAT (Collected)", f"AED {inc_vat:,.2f}")
-        v2.metric("Input VAT (Recoverable)", f"AED {exp_vat:,.2f}")
-        v3.metric("Net VAT Payable to FTA", f"AED {net_vat:,.2f}")
-    else:
-        st.info("Upload financial data to calculate automated VAT returns.")
+    with tab1:
+        st.subheader("1. Corporate Tax Assessment (Jan to Dec)")
+        st.caption("Standard UAE Tax Period: Jan 1 – Dec 31 (9% rate on net profit exceeding AED 375,000)")
+
+        if not df_fin.empty and "DATE" in df_fin.columns:
+            years = sorted([int(y) for y in df_fin["DATE"].dt.year.dropna().unique()])
+            tax_year = st.selectbox("Select Corporate Tax Year", years, index=len(years) - 1 if years else 0)
+
+            df_tax = df_fin[df_fin["DATE"].dt.year == tax_year]
+            tot_inc_tax = df_tax["INCOME_AMOUNT"].sum()
+            tot_exp_tax = df_tax["EXPENSE_AMOUNT"].sum()
+            net_taxable_income = tot_inc_tax - tot_exp_tax
+
+            tax_threshold = 375000.0
+            taxable_amount = max(0.0, net_taxable_income - tax_threshold)
+            corp_tax_payable = taxable_amount * 0.09
+
+            st.write(f"**Total Revenue:** AED {tot_inc_tax:,.2f}")
+            st.write(f"**Total Deductible Expenses:** AED {tot_exp_tax:,.2f}")
+            st.write(f"**Net Profit Before Tax:** AED {net_taxable_income:,.2f}")
+            st.write(f"**Exempt Threshold:** AED {tax_threshold:,.2f}")
+            st.metric("Corporate Tax Payable (9%)", f"AED {corp_tax_payable:,.2f}")
+
+    with tab2:
+        st.subheader("2. Quarterly VAT Return (June to August Quarter)")
+        st.caption("Specific FTA Tax Period: June 1 – August 31")
+
+        if not df_fin.empty and "DATE" in df_fin.columns:
+            vat_years = sorted([int(y) for y in df_fin["DATE"].dt.year.dropna().unique()])
+            vat_year = st.selectbox("Select VAT Return Year", vat_years, index=len(vat_years) - 1 if vat_years else 0)
+
+            # Filter June (6), July (7), August (8)
+            df_vat_q = df_fin[
+                (df_fin["DATE"].dt.year == vat_year)
+                & (df_fin["DATE"].dt.month.isin([6, 7, 8]))
+            ]
+
+            output_vat = df_vat_q["INCOME_VAT"].sum() if "INCOME_VAT" in df_vat_q.columns else 0.0
+            input_vat = df_vat_q["EXPENSE_VAT"].sum() if "EXPENSE_VAT" in df_vat_q.columns else 0.0
+            net_vat_due = output_vat - input_vat
+
+            st.write(f"**Output VAT Collected (Jun-Aug):** AED {output_vat:,.2f}")
+            st.write(f"**Input VAT Paid (Jun-Aug):** AED {input_vat:,.2f}")
+            st.metric("Net VAT Payable / (Claimable)", f"AED {net_vat_due:,.2f}")
+
+            with st.expander("View June to August Transactions"):
+                st.dataframe(df_vat_q, use_container_width=True)
 
 
 # --- MODULE 5: PROJECT PROFITABILITY ---
 elif nav == "Project Profitability":
-    st.title("Project Profitability & Tracking")
+    st.title("Project Profitability & Value Tracking")
 
     df_proj = st.session_state.project_data
 
     if not df_proj.empty:
         if "Total_Amount" in df_proj.columns:
             total_val = df_proj["Total_Amount"].sum()
-            st.metric("Total Contract Value Across Projects", f"AED {total_val:,.2f}")
+            st.metric("Total Active Portfolio Contract Value", f"AED {total_val:,.2f}")
         st.dataframe(df_proj, use_container_width=True)
     else:
-        st.warning("No project records found. Go to 'Data Management & Templates' to add new projects.")
+        st.warning("No project records registered. Go to 'Data Management & Templates' to add entries.")
 
 
 # --- MODULE 6: DOCUMENT GENERATOR ---
