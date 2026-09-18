@@ -73,20 +73,24 @@ def parse_financial_data(uploaded_file):
 
 
 def parse_project_summary(uploaded_file):
-    """Parses 'Project update AIN RENOV.xlsx' summary sheet."""
+    """Parses 'Project update AIN RENOV.xlsx' summary sheet cleanly."""
     xls = pd.ExcelFile(uploaded_file)
-    summary_df = pd.read_excel(xls, sheet_name="Our Profit and Pending Payments")
+    # Read sheet skipping top header row offset
+    summary_df = pd.read_excel(
+        xls, sheet_name="Our Profit and Pending Payments", skiprows=1
+    )
 
-    # Clean header row offset
+    # Clean empty rows and slice the core 5 summary columns
+    summary_df = summary_df.dropna(how="all").iloc[:, :5]
     summary_df.columns = [
         "SL_NO",
         "Project_Name",
         "Project_Value",
         "VAT",
         "Total_Amount",
-        "Notes",
     ]
-    summary_df = summary_df.dropna(subset=["Project_Name"])
+
+    # Keep only numeric project rows
     summary_df = summary_df[
         pd.to_numeric(summary_df["SL_NO"], errors="coerce").notna()
     ]
