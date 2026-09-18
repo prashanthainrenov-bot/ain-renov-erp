@@ -5,6 +5,12 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
+# PDF Generation imports
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Ain Renov ERP - Financials & Operations",
@@ -178,7 +184,48 @@ def safe_int(val, default=0):
     except (ValueError, TypeError):
         return default
 
-# --- TEMPLATE GENERATORS ---
+# --- EXPORT HELPERS (EXCEL & PDF) ---
+def export_to_excel(df, sheet_name="Data"):
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return buffer.getvalue()
+
+def export_to_pdf(df, title="Report Summary"):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+
+    story.append(Paragraph(f"<b>Ain Renov Technical Services LLC</b>", styles['Heading1']))
+    story.append(Paragraph(f"<b>{title}</b> - Generated on {datetime.date.today().strftime('%Y-%m-%d')}", styles['SubTitle']))
+    story.append(Spacer(1, 12))
+
+    if not df.empty:
+        # Format table data
+        columns = list(df.columns)
+        table_data = [columns]
+        for _, row in df.iterrows():
+            table_data.append([str(row[col]) for col in columns])
+        
+        t = Table(table_data)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+        ]))
+        story.append(t)
+    else:
+        story.append(Paragraph("No records found.", styles['Normal']))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+# --- BLANK TEMPLATE GENERATORS ---
 def generate_financial_template():
     df_temp = pd.DataFrame([{
         "SL NO": 1,
@@ -211,10 +258,7 @@ def generate_financial_template():
         "VAT.1": 0.0,
         "Net Amount": 3500.0
     }])
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df_temp.to_excel(writer, index=False, sheet_name='Financials')
-    return buffer.getvalue()
+    return export_to_excel(df_temp, "Financials")
 
 def generate_quotation_template():
     df_temp = pd.DataFrame([{
@@ -228,10 +272,7 @@ def generate_quotation_template():
         "Feedback_Status": "In Process",
         "Notes": "Initial quotation submitted."
     }])
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df_temp.to_excel(writer, index=False, sheet_name='Quotations')
-    return buffer.getvalue()
+    return export_to_excel(df_temp, "Quotations")
 
 def generate_petty_cash_template():
     df_temp = pd.DataFrame([{
@@ -244,10 +285,7 @@ def generate_petty_cash_template():
         "BALANCE": 1850.0,
         "REMARKS": "Paid in cash"
     }])
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df_temp.to_excel(writer, index=False, sheet_name='Petty_Cash')
-    return buffer.getvalue()
+    return export_to_excel(df_temp, "Petty_Cash")
 
 def generate_vendor_template():
     df_temp = pd.DataFrame([{
@@ -260,10 +298,7 @@ def generate_vendor_template():
         "Balance_Payable": 15000.0,
         "Status": "Partially Paid"
     }])
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df_temp.to_excel(writer, index=False, sheet_name='Vendors')
-    return buffer.getvalue()
+    return export_to_excel(df_temp, "Vendors")
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("Ain Renov ERP")
@@ -287,7 +322,7 @@ nav = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📥 Data Uploader")
+st.sidebar.subheader("📥 Data Uploaders")
 
 # 1. Financial Ledger Upload
 up_fin = st.sidebar.file_uploader("Upload Financial Ledger (.xlsx)", type=["xlsx"])
@@ -615,6 +650,10 @@ elif nav == "P&L (YoY Analysis)":
             m3.metric("Net Profit", f"AED {prof_tot:,.2f}")
             
             st.markdown("---")
+            e_col, p_col = st.columns(2)
+            e_col.download_button("📥 Export P&L to Excel", export_to_excel(curr_df, f"P&L_{sel_y}"), f"PL_{sel_y}.xlsx")
+            p_col.download_button("📄 Export P&L to PDF", export_to_pdf(curr_df[["date", "bill_no", "particulars", "income_net", "expense_net"]], f"P&L Statement - {sel_y}"), f"PL_{sel_y}.pdf")
+            
             st.dataframe(curr_df, use_container_width=True)
         else:
             st.warning("No records starting from 2024 onwards.")
@@ -685,6 +724,7 @@ elif nav == "VAT & Corporate Tax Returns":
                 vm2.metric("Input VAT (Expenses)", f"AED {in_vat:,.2f}")
                 vm3.metric("Net VAT Payable / (Recoverable)", f"AED {net_vat:,.2f}")
                 
+                st.download_button("📥 Export VAT Return to Excel", export_to_excel(df_q, "VAT_Return"), f"VAT_Return_{vy}.xlsx")
                 st.dataframe(df_q, use_container_width=True)
 
 # --- MODULE 5: PETTY CASH LEDGER ---
@@ -703,6 +743,10 @@ elif nav == "Petty Cash Ledger":
         pm3.metric("Remaining Cash Balance", f"AED {bal:,.2f}")
         
         st.markdown("---")
+        ex1, ex2 = st.columns(2)
+        ex1.download_button("📥 Export Petty Cash (Excel)", export_to_excel(df_pc, "Petty_Cash"), "Petty_Cash.xlsx")
+        ex2.download_button("📄 Export Petty Cash (PDF)", export_to_pdf(df_pc, "Petty Cash Ledger"), "Petty_Cash.pdf")
+        
         st.dataframe(df_pc, use_container_width=True)
         
         pc_del_id = st.number_input("Enter Petty Cash Record ID to Delete", min_value=1, step=1)
@@ -741,6 +785,7 @@ elif nav == "Project-Wise Analysis":
         st.markdown("---")
         st.subheader("Project Specific Transactions")
         if not p_fin.empty:
+            st.download_button("📥 Export Project Report (Excel)", export_to_excel(p_fin, f"Project_{sel_proj}"), f"Project_{sel_proj}.xlsx")
             st.dataframe(p_fin, use_container_width=True)
         else:
             st.info("No financial transactions linked to this project name in Particulars.")
@@ -780,6 +825,7 @@ elif nav == "Client Payments Tracker":
         c2.metric("Total Collected", f"AED {df_cp['amount_received'].sum():,.2f}")
         c3.metric("Total Receivables Outstanding", f"AED {df_cp['balance_due'].sum():,.2f}")
         
+        st.download_button("📥 Export Receivables Ledger (Excel)", export_to_excel(df_cp, "Client_Payments"), "Client_Payments.xlsx")
         st.dataframe(df_cp, use_container_width=True)
     else:
         st.info("No client payment entries recorded.")
@@ -827,6 +873,7 @@ elif nav == "Vendor Payments & Ageing":
         
         st.markdown("---")
         st.subheader("Detailed Vendor Ledger")
+        st.download_button("📥 Export Vendor Ageing Report (Excel)", export_to_excel(df_vp, "Vendor_Ageing"), "Vendor_Ageing.xlsx")
         st.dataframe(df_vp, use_container_width=True)
         
         v_del = st.number_input("Enter Vendor Record ID to delete", min_value=1, step=1)
@@ -875,6 +922,7 @@ elif nav == "Quotation Tracker":
                     st.rerun()
 
         st.markdown("---")
+        st.download_button("📥 Export Quotations (Excel)", export_to_excel(df_q, "Quotations"), "Quotations_Tracker.xlsx")
         st.dataframe(df_q, use_container_width=True)
         
         qd_id = st.number_input("Enter Quotation ID to delete", min_value=1, step=1)
@@ -990,3 +1038,4 @@ elif nav == "Document Generator":
     
     if st.button("Generate Document"):
         st.success(f"{doc_type} generated successfully for {client_name}!")
+
