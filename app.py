@@ -116,3 +116,43 @@ elif nav == "Quotation & Salary Trackers":
     st.header("Quotation & Salary Trackers")
     st.subheader("Salary Tracker")
     st.info("Manage individual employee salaries, payouts, and pending approvals.")
+    def load_financial_data(file):
+    try:
+        df = pd.read_excel(file)
+
+        # Drop completely empty trailing columns (like Unnamed: 12, 13, etc.)
+        df = df.dropna(how="all", axis=1)
+
+        # Explicitly rename columns to prevent duplicate name crashes
+        rename_map = {
+            "Capital/ Income": "INCOME_AMOUNT",
+            "VAT": "INCOME_VAT",
+            "NET AMOUNT": "INCOME_NET",
+            "Expenses": "EXPENSE_AMOUNT",
+            "VAT.1": "EXPENSE_VAT",
+            "Net Amount": "EXPENSE_NET",
+            "Net Amount.1": "EXPENSE_NET",
+        }
+        df = df.rename(columns=rename_map)
+
+        # Convert date column
+        if "DATE" in df.columns:
+            df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
+
+        # Ensure numeric types for accurate P&L calculations
+        for col in ["INCOME_AMOUNT", "INCOME_NET", "EXPENSE_AMOUNT", "EXPENSE_NET"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        # Ensure unique column names just in case
+        cols = pd.Series(df.columns)
+        for dup in cols[cols.duplicated()].unique():
+            cols[cols[cols == dup].index] = [
+                f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))
+            ]
+        df.columns = cols
+
+        return df
+    except Exception as e:
+        st.error(f"Error reading Financial file: {e}")
+        return pd.DataFrame()
