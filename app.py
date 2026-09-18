@@ -5,12 +5,6 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# PDF Generation imports
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Ain Renov ERP - Financials & Operations",
@@ -184,48 +178,13 @@ def safe_int(val, default=0):
     except (ValueError, TypeError):
         return default
 
-# --- EXPORT HELPERS (EXCEL & PDF) ---
-def export_to_excel(df, sheet_name="Data"):
+def convert_df_to_excel(df):
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        df.to_excel(writer, index=False, sheet_name='Data')
     return buffer.getvalue()
 
-def export_to_pdf(df, title="Report Summary"):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    styles = getSampleStyleSheet()
-    story = []
-
-    story.append(Paragraph(f"<b>Ain Renov Technical Services LLC</b>", styles['Heading1']))
-    story.append(Paragraph(f"<b>{title}</b> - Generated on {datetime.date.today().strftime('%Y-%m-%d')}", styles['SubTitle']))
-    story.append(Spacer(1, 12))
-
-    if not df.empty:
-        # Format table data
-        columns = list(df.columns)
-        table_data = [columns]
-        for _, row in df.iterrows():
-            table_data.append([str(row[col]) for col in columns])
-        
-        t = Table(table_data)
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
-        ]))
-        story.append(t)
-    else:
-        story.append(Paragraph("No records found.", styles['Normal']))
-
-    doc.build(story)
-    return buffer.getvalue()
-
-# --- BLANK TEMPLATE GENERATORS ---
+# --- TEMPLATE GENERATORS ---
 def generate_financial_template():
     df_temp = pd.DataFrame([{
         "SL NO": 1,
@@ -258,7 +217,7 @@ def generate_financial_template():
         "VAT.1": 0.0,
         "Net Amount": 3500.0
     }])
-    return export_to_excel(df_temp, "Financials")
+    return convert_df_to_excel(df_temp)
 
 def generate_quotation_template():
     df_temp = pd.DataFrame([{
@@ -272,7 +231,7 @@ def generate_quotation_template():
         "Feedback_Status": "In Process",
         "Notes": "Initial quotation submitted."
     }])
-    return export_to_excel(df_temp, "Quotations")
+    return convert_df_to_excel(df_temp)
 
 def generate_petty_cash_template():
     df_temp = pd.DataFrame([{
@@ -285,7 +244,7 @@ def generate_petty_cash_template():
         "BALANCE": 1850.0,
         "REMARKS": "Paid in cash"
     }])
-    return export_to_excel(df_temp, "Petty_Cash")
+    return convert_df_to_excel(df_temp)
 
 def generate_vendor_template():
     df_temp = pd.DataFrame([{
@@ -298,7 +257,7 @@ def generate_vendor_template():
         "Balance_Payable": 15000.0,
         "Status": "Partially Paid"
     }])
-    return export_to_excel(df_temp, "Vendors")
+    return convert_df_to_excel(df_temp)
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("Ain Renov ERP")
@@ -316,13 +275,12 @@ nav = st.sidebar.radio(
         "Client Payments Tracker",
         "Vendor Payments & Ageing",
         "Quotation Tracker",
-        "Staff Salaries Tracker",
-        "Document Generator"
+        "Staff Salaries Tracker"
     ]
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📥 Data Uploaders")
+st.sidebar.subheader("📥 Data Uploader (4 Templates)")
 
 # 1. Financial Ledger Upload
 up_fin = st.sidebar.file_uploader("Upload Financial Ledger (.xlsx)", type=["xlsx"])
@@ -361,6 +319,7 @@ if up_fin and st.sidebar.button("Process & Save Financial File"):
             ''', (sl_val, yes_no_val, d_val, pay_date, bill_no, part_txt, pmode, is_petty,
                   inc_amt, inc_vat, inc_net, exp_amt, exp_vat, exp_net))
             
+            # Auto-populate Petty Cash table if flagged as Petty Cash or Cash Payment
             if is_petty == "YES" or "CASH" in pmode.upper():
                 c.execute('''
                     INSERT INTO petty_cash (sl_no, date, voucher_no, description, cash_in, cash_out, balance, remarks)
@@ -369,7 +328,7 @@ if up_fin and st.sidebar.button("Process & Save Financial File"):
 
         conn.commit()
         conn.close()
-        st.sidebar.success("Financial file saved!")
+        st.sidebar.success("Financial file saved successfully!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing financial file: {e}")
@@ -401,7 +360,7 @@ if up_q and st.sidebar.button("Process & Save Quotations File"):
             ))
         conn.commit()
         conn.close()
-        st.sidebar.success("Quotations file saved!")
+        st.sidebar.success("Quotations file saved successfully!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing quotation file: {e}")
@@ -430,7 +389,7 @@ if up_pc and st.sidebar.button("Process & Save Petty Cash File"):
             ))
         conn.commit()
         conn.close()
-        st.sidebar.success("Petty Cash file saved!")
+        st.sidebar.success("Petty Cash file saved successfully!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing petty cash file: {e}")
@@ -458,14 +417,14 @@ if up_v and st.sidebar.button("Process & Save Vendor File"):
             ))
         conn.commit()
         conn.close()
-        st.sidebar.success("Vendor file saved!")
+        st.sidebar.success("Vendor file saved successfully!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing vendor file: {e}")
 
 # --- MODULE 1: OVERVIEW & DASHBOARD ---
 if nav == "Overview & Dashboard":
-    st.title("📊 Ain Renov Technical Services - Financial Summary")
+    st.title("📊 Financial Summary & Operations Dashboard")
     
     df_fin = load_db_table("financials")
     df_p = load_db_table("projects")
@@ -489,29 +448,31 @@ if nav == "Overview & Dashboard":
         st.subheader("Active Projects Summary")
         if not df_p.empty:
             st.dataframe(df_p, use_container_width=True)
+            st.download_button("📥 Export Projects (Excel)", convert_df_to_excel(df_p), "Projects_Summary.xlsx")
         else:
-            st.info("No projects registered.")
+            st.info("No active projects registered.")
     with col_b:
         st.subheader("Quotations Pipeline")
         if not df_q.empty:
             st.dataframe(df_q[["quotation_id", "client_name", "quotation_amount", "feedback_status"]], use_container_width=True)
+            st.download_button("📥 Export Quotations (Excel)", convert_df_to_excel(df_q), "Quotations_Pipeline.xlsx")
         else:
-            st.info("No quotations found.")
+            st.info("No quotation proposals registered.")
 
 # --- MODULE 2: DATA IMPORT, EXPORT & CLEAR ---
 elif nav == "Data Import, Export & Clear":
-    st.title("⚙️ Data Management & Module Controls")
+    st.title("⚙️ Data Management, Blank Templates & Module Controls")
     
-    st.markdown("### 1. Download Standard Blank Templates")
+    st.markdown("### 1. Download Blank Excel Templates")
     t1, t2, t3, t4 = st.columns(4)
-    t1.download_button("Financial Template (.xlsx)", generate_financial_template(), "Financial_Template.xlsx")
-    t2.download_button("Quotation Template (.xlsx)", generate_quotation_template(), "Quotation_Template.xlsx")
-    t3.download_button("Petty Cash Template (.xlsx)", generate_petty_cash_template(), "Petty_Cash_Template.xlsx")
-    t4.download_button("Vendor Template (.xlsx)", generate_vendor_template(), "Vendor_Template.xlsx")
+    t1.download_button("📥 Financial Template", generate_financial_template(), "Financial_Template.xlsx")
+    t2.download_button("📥 Quotation Template", generate_quotation_template(), "Quotation_Template.xlsx")
+    t3.download_button("📥 Petty Cash Template", generate_petty_cash_template(), "Petty_Cash_Template.xlsx")
+    t4.download_button("📥 Vendor Template", generate_vendor_template(), "Vendor_Template.xlsx")
 
     st.markdown("---")
     st.markdown("### 2. Manual Data Entry Forms")
-    tab_f, tab_p, tab_pc, tab_q = st.tabs(["Financial Entry", "New Project", "Petty Cash", "Quotation Proposal"])
+    tab_f, tab_p, tab_pc, tab_q = st.tabs(["Financial Entry", "New Project", "Petty Cash Entry", "Quotation Proposal"])
     
     with tab_f:
         with st.form("f_form"):
@@ -563,7 +524,7 @@ elif nav == "Data Import, Export & Clear":
                 ''', (1, p_name, c_name, p_val, p_vat, p_tot, "Active"))
                 conn.commit()
                 conn.close()
-                st.success("Project added!")
+                st.success("Project saved successfully!")
                 st.rerun()
 
     with tab_pc:
@@ -582,7 +543,7 @@ elif nav == "Data Import, Export & Clear":
                 ''', (1, str(pc_date), pc_vno, pc_desc, pc_amt if pc_type == "Cash In (Top-Up)" else 0.0, pc_amt if pc_type == "Cash Out (Expense)" else 0.0, 0.0, "Manual Entry"))
                 conn.commit()
                 conn.close()
-                st.success("Petty Cash saved!")
+                st.success("Petty Cash entry saved!")
                 st.rerun()
 
     with tab_q:
@@ -603,25 +564,25 @@ elif nav == "Data Import, Export & Clear":
                 ''', (f"Q-{datetime.datetime.now().strftime('%M%S')}", q_cname, q_pname, str(q_date), str(q_close), str(q_rem), q_amt, q_status, ""))
                 conn.commit()
                 conn.close()
-                st.success("Quotation recorded!")
+                st.success("Quotation saved!")
                 st.rerun()
 
     st.markdown("---")
-    st.markdown("### 3. Clear Data Section Wise")
+    st.markdown("### 3. Clear Data Section-Wise")
     cl1, cl2, cl3, cl4 = st.columns(4)
-    if cl1.button("Clear Financials"):
+    if cl1.button("Clear Financials Table"):
         clear_db_table("financials")
         st.success("Financials cleared!")
         st.rerun()
-    if cl2.button("Clear Projects"):
+    if cl2.button("Clear Projects Table"):
         clear_db_table("projects")
         st.success("Projects cleared!")
         st.rerun()
-    if cl3.button("Clear Quotations"):
+    if cl3.button("Clear Quotations Table"):
         clear_db_table("quotations")
         st.success("Quotations cleared!")
         st.rerun()
-    if cl4.button("Clear Petty Cash"):
+    if cl4.button("Clear Petty Cash Table"):
         clear_db_table("petty_cash")
         st.success("Petty Cash cleared!")
         st.rerun()
@@ -650,13 +611,10 @@ elif nav == "P&L (YoY Analysis)":
             m3.metric("Net Profit", f"AED {prof_tot:,.2f}")
             
             st.markdown("---")
-            e_col, p_col = st.columns(2)
-            e_col.download_button("📥 Export P&L to Excel", export_to_excel(curr_df, f"P&L_{sel_y}"), f"PL_{sel_y}.xlsx")
-            p_col.download_button("📄 Export P&L to PDF", export_to_pdf(curr_df[["date", "bill_no", "particulars", "income_net", "expense_net"]], f"P&L Statement - {sel_y}"), f"PL_{sel_y}.pdf")
-            
             st.dataframe(curr_df, use_container_width=True)
+            st.download_button(f"📥 Download P&L {sel_y} (Excel)", convert_df_to_excel(curr_df), f"PnL_{sel_y}.xlsx")
         else:
-            st.warning("No records starting from 2024 onwards.")
+            st.warning("No financial records logged starting from 2024 onwards.")
     else:
         st.info("No financial data found.")
 
@@ -685,8 +643,9 @@ elif nav == "VAT & Corporate Tax Returns":
                 st.write(f"**Allowable Expenses:** AED {exp:,.2f}")
                 st.write("**Tax Exemption Threshold:** AED 375,000.00")
                 st.metric("Corporate Tax Payable (9%)", f"AED {corp_tax:,.2f}")
+                st.download_button("📥 Export Corporate Tax Schedule (Excel)", convert_df_to_excel(df_tax), f"Corporate_Tax_{tax_y}.xlsx")
         else:
-            st.info("No financial records to evaluate.")
+            st.info("No financial records available to evaluate tax.")
 
     with tab2:
         st.subheader("Quarter-on-Quarter VAT Return Schedules")
@@ -696,7 +655,7 @@ elif nav == "VAT & Corporate Tax Returns":
             if vat_years:
                 v1, v2 = st.columns(2)
                 vy = v1.selectbox("Select Year", vat_years, index=len(vat_years)-1)
-                q_opt = v2.selectbox("Select VAT Quarter", [
+                q_opt = v2.selectbox("Select Custom VAT Quarter", [
                     "March to May Quarter (Mar - May)",
                     "June to August Quarter (Jun - Aug)",
                     "September to November Quarter (Sep - Nov)",
@@ -724,8 +683,8 @@ elif nav == "VAT & Corporate Tax Returns":
                 vm2.metric("Input VAT (Expenses)", f"AED {in_vat:,.2f}")
                 vm3.metric("Net VAT Payable / (Recoverable)", f"AED {net_vat:,.2f}")
                 
-                st.download_button("📥 Export VAT Return to Excel", export_to_excel(df_q, "VAT_Return"), f"VAT_Return_{vy}.xlsx")
                 st.dataframe(df_q, use_container_width=True)
+                st.download_button("📥 Export VAT Quarter Data (Excel)", convert_df_to_excel(df_q), "VAT_Quarter_Report.xlsx")
 
 # --- MODULE 5: PETTY CASH LEDGER ---
 elif nav == "Petty Cash Ledger":
@@ -738,19 +697,16 @@ elif nav == "Petty Cash Ledger":
         bal = c_in - c_out
         
         pm1, pm2, pm3 = st.columns(3)
-        pm1.metric("Total Float Received", f"AED {c_in:,.2f}")
-        pm2.metric("Total Disbursed", f"AED {c_out:,.2f}")
+        pm1.metric("Total Cash Float Received", f"AED {c_in:,.2f}")
+        pm2.metric("Total Cash Disbursed", f"AED {c_out:,.2f}")
         pm3.metric("Remaining Cash Balance", f"AED {bal:,.2f}")
         
         st.markdown("---")
-        ex1, ex2 = st.columns(2)
-        ex1.download_button("📥 Export Petty Cash (Excel)", export_to_excel(df_pc, "Petty_Cash"), "Petty_Cash.xlsx")
-        ex2.download_button("📄 Export Petty Cash (PDF)", export_to_pdf(df_pc, "Petty Cash Ledger"), "Petty_Cash.pdf")
-        
         st.dataframe(df_pc, use_container_width=True)
+        st.download_button("📥 Export Petty Cash Register (Excel)", convert_df_to_excel(df_pc), "Petty_Cash_Register.xlsx")
         
         pc_del_id = st.number_input("Enter Petty Cash Record ID to Delete", min_value=1, step=1)
-        if st.button("Delete Entry"):
+        if st.button("Delete Petty Cash Record"):
             delete_db_row("petty_cash", pc_del_id)
             st.success(f"Record {pc_del_id} deleted!")
             st.rerun()
@@ -768,7 +724,7 @@ elif nav == "Project-Wise Analysis":
         sel_proj = st.selectbox("Select Project to Analyze", p_list)
         
         proj_info = df_p[df_p["project_name"] == sel_proj].iloc[0]
-        st.subheader(f"Project Overview: {sel_proj} (Client: {proj_info.get('client_name', 'N/A')})")
+        st.subheader(f"Project: {sel_proj} (Client: {proj_info.get('client_name', 'N/A')})")
         
         p_fin = df_fin[df_fin["particulars"].str.upper().str.contains(sel_proj.upper(), na=False)] if not df_fin.empty else pd.DataFrame()
         
@@ -783,18 +739,18 @@ elif nav == "Project-Wise Analysis":
         m4.metric("Net Margin", f"AED {p_prof:,.2f}")
         
         st.markdown("---")
-        st.subheader("Project Specific Transactions")
+        st.subheader("Project-Specific Transactions")
         if not p_fin.empty:
-            st.download_button("📥 Export Project Report (Excel)", export_to_excel(p_fin, f"Project_{sel_proj}"), f"Project_{sel_proj}.xlsx")
             st.dataframe(p_fin, use_container_width=True)
+            st.download_button("📥 Export Project Transactions (Excel)", convert_df_to_excel(p_fin), f"Project_{sel_proj}.xlsx")
         else:
             st.info("No financial transactions linked to this project name in Particulars.")
     else:
-        st.info("No project records registered.")
+        st.info("No projects registered.")
 
 # --- MODULE 7: CLIENT PAYMENTS TRACKER ---
 elif nav == "Client Payments Tracker":
-    st.title("📑 Client Invoicing & Payment Collection Tracker")
+    st.title("📑 Client Invoicing & Receivables Tracker")
     df_cp = load_db_table("client_payments")
     
     with st.expander("➕ Register New Client Invoice"):
@@ -816,26 +772,26 @@ elif nav == "Client Payments Tracker":
                 ''', (c_name, p_name, inv_no, str(inv_date), str(due_date), inv_amt, amt_rec, bal, "Paid" if bal <= 0 else "Pending"))
                 conn.commit()
                 conn.close()
-                st.success("Invoice saved!")
+                st.success("Invoice saved successfully!")
                 st.rerun()
 
     if not df_cp.empty:
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Invoiced", f"AED {df_cp['invoice_amount'].sum():,.2f}")
         c2.metric("Total Collected", f"AED {df_cp['amount_received'].sum():,.2f}")
-        c3.metric("Total Receivables Outstanding", f"AED {df_cp['balance_due'].sum():,.2f}")
+        c3.metric("Outstanding Receivables", f"AED {df_cp['balance_due'].sum():,.2f}")
         
-        st.download_button("📥 Export Receivables Ledger (Excel)", export_to_excel(df_cp, "Client_Payments"), "Client_Payments.xlsx")
         st.dataframe(df_cp, use_container_width=True)
+        st.download_button("📥 Export Client Receivables (Excel)", convert_df_to_excel(df_cp), "Client_Receivables.xlsx")
     else:
         st.info("No client payment entries recorded.")
 
 # --- MODULE 8: VENDOR PAYMENTS & AGEING ---
 elif nav == "Vendor Payments & Ageing":
-    st.title("🚚 Vendor Payments & Ageing Analysis")
+    st.title("🚚 Vendor Payables & Ageing Analysis")
     df_vp = load_db_table("vendor_payments")
     
-    with st.expander("➕ Add Vendor Bill"):
+    with st.expander("➕ Register Vendor Bill"):
         with st.form("vp_form"):
             v_name = st.text_input("Vendor Name")
             b_no = st.text_input("Bill No", "BILL-")
@@ -873,8 +829,8 @@ elif nav == "Vendor Payments & Ageing":
         
         st.markdown("---")
         st.subheader("Detailed Vendor Ledger")
-        st.download_button("📥 Export Vendor Ageing Report (Excel)", export_to_excel(df_vp, "Vendor_Ageing"), "Vendor_Ageing.xlsx")
         st.dataframe(df_vp, use_container_width=True)
+        st.download_button("📥 Export Vendor Ageing Ledger (Excel)", convert_df_to_excel(df_vp), "Vendor_Ageing.xlsx")
         
         v_del = st.number_input("Enter Vendor Record ID to delete", min_value=1, step=1)
         if st.button("Delete Vendor Record"):
@@ -922,8 +878,8 @@ elif nav == "Quotation Tracker":
                     st.rerun()
 
         st.markdown("---")
-        st.download_button("📥 Export Quotations (Excel)", export_to_excel(df_q, "Quotations"), "Quotations_Tracker.xlsx")
         st.dataframe(df_q, use_container_width=True)
+        st.download_button("📥 Export Quotations (Excel)", convert_df_to_excel(df_q), "Quotations_Tracker.xlsx")
         
         qd_id = st.number_input("Enter Quotation ID to delete", min_value=1, step=1)
         if st.button("Delete Quotation Entry"):
@@ -936,7 +892,7 @@ elif nav == "Quotation Tracker":
 # --- MODULE 10: STAFF SALARIES TRACKER ---
 elif nav == "Staff Salaries Tracker":
     st.title("💵 Staff Salaries Tracker & Ledger Reconciliation")
-    tab_s1, tab_s2 = st.tabs(["1. Salary Calculator & Outstanding Balances", "2. Employee Agreements"])
+    tab_s1, tab_s2 = st.tabs(["1. Salary Calculator & Outstanding Balances", "2. Employee Agreements Setup"])
     
     df_fin = load_db_table("financials")
     df_prof = load_db_table("salary_profiles")
@@ -1013,29 +969,10 @@ elif nav == "Staff Salaries Tracker":
             st.markdown("---")
             st.subheader(f"Disbursement History for {sel_emp}")
             if not df_sal.empty:
-                st.dataframe(df_sal[df_sal["Employee_Name"] == sel_emp], use_container_width=True)
+                emp_history = df_sal[df_sal["Employee_Name"] == sel_emp]
+                st.dataframe(emp_history, use_container_width=True)
+                st.download_button("📥 Export Staff Pay History (Excel)", convert_df_to_excel(emp_history), f"Salary_Statement_{sel_emp}.xlsx")
             else:
                 st.info("No disbursements matched in financial ledger.")
         else:
             st.info("No employee salary profiles or disbursements logged.")
-
-# --- MODULE 11: DOCUMENT GENERATOR ---
-elif nav == "Document Generator":
-    st.title("📄 Tax Invoice & LPO Generator")
-    doc_type = st.selectbox("Document Type", ["Progressive Tax Invoice", "Advance Tax Invoice", "Local Purchase Order (LPO)"])
-    
-    c_a, c_b = st.columns(2)
-    client_name = c_a.text_input("Client / Contractor Name", "Ain Renov Client")
-    project_title = c_a.text_input("Project Description", "HVAC Renovation")
-    amt_base = c_b.number_input("Base Amount (Excl VAT AED)", min_value=0.0, value=10000.0)
-    
-    amt_vat = amt_base * 0.05
-    amt_total = amt_base + amt_vat
-    
-    st.write(f"**Subtotal:** AED {amt_base:,.2f}")
-    st.write(f"**UAE VAT (5%):** AED {amt_vat:,.2f}")
-    st.write(f"**Total Payable:** AED {amt_total:,.2f}")
-    
-    if st.button("Generate Document"):
-        st.success(f"{doc_type} generated successfully for {client_name}!")
-
