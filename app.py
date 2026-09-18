@@ -88,8 +88,8 @@ def generate_financial_template():
             {
                 "SL NO": 1,
                 "YES/NO": "YES",
-                "DATE": "2026-01-15",
-                "PAYMENT DATE": "2026-01-20",
+                "DATE": "2026-03-15",
+                "PAYMENT DATE": "2026-03-20",
                 "BILL/ INVOICE NUMBER": "INV-1001",
                 "PARTICULARS": "A/C Maintenance Advance Payment",
                 "Capital/ Income": 10000.0,
@@ -102,8 +102,8 @@ def generate_financial_template():
             {
                 "SL NO": 2,
                 "YES/NO": "YES",
-                "DATE": "2026-01-18",
-                "PAYMENT DATE": "2026-01-18",
+                "DATE": "2026-03-18",
+                "PAYMENT DATE": "2026-03-18",
                 "BILL/ INVOICE NUMBER": "EXP-5021",
                 "PARTICULARS": "SALARY PAID TO PRAMOTH",
                 "Capital/ Income": 0.0,
@@ -147,9 +147,9 @@ def generate_quotation_template():
                 "Quotation_ID": "Q-2026-01",
                 "Client_Name": "Emaar Properties",
                 "Project_Name": "Marina Tower HVAC Renovation",
-                "Quotation_Date": "2026-02-01",
-                "Expected_Closure_Date": "2026-03-15",
-                "Followup_Reminder_Date": "2026-02-28",
+                "Quotation_Date": "2026-03-01",
+                "Expected_Closure_Date": "2026-04-15",
+                "Followup_Reminder_Date": "2026-03-28",
                 "Quotation_Amount": 45000.0,
                 "Feedback_Status": "In Process",
                 "Notes": "Initial quotation submitted. Awaiting technical approval.",
@@ -490,8 +490,8 @@ elif nav == "VAT & Corporate Tax Compliance":
                 st.info("No tax records available from 2024 onwards.")
 
     with tab2:
-        st.subheader("Quarter-on-Quarter VAT Returns")
-        st.caption("Quarterly VAT Filing options including June–August custom FTA quarter.")
+        st.subheader("Custom Quarter-on-Quarter VAT Returns")
+        st.caption("Filing quarters structured around FTA schedule starting from 2024 onwards.")
 
         if not df_fin.empty and "DATE" in df_fin.columns:
             vat_years = sorted([int(y) for y in df_fin["DATE"].dt.year.dropna().unique() if y >= 2024])
@@ -501,32 +501,42 @@ elif nav == "VAT & Corporate Tax Compliance":
                     vat_year = st.selectbox("Select Tax Year", vat_years, index=len(vat_years) - 1, key="vat_yr")
                 with v_col2:
                     quarter_choice = st.selectbox(
-                        "Select VAT Quarter Period",
+                        "Select Custom VAT Quarter",
                         [
+                            "March to May Quarter (Mar - May)",
                             "June to August Quarter (Jun - Aug)",
-                            "Quarter 1 (Jan - Mar)",
-                            "Quarter 2 (Apr - Jun)",
-                            "Quarter 3 (Jul - Sep)",
-                            "Quarter 4 (Oct - Dec)",
+                            "September to November Quarter (Sep - Nov)",
+                            "December to February Quarter (Dec - Feb)",
                         ],
                     )
 
-                # Filter dates according to choice
-                if "June to August" in quarter_choice:
-                    months_filter = [6, 7, 8]
-                elif "Quarter 1" in quarter_choice:
-                    months_filter = [1, 2, 3]
-                elif "Quarter 2" in quarter_choice:
-                    months_filter = [4, 5, 6]
-                elif "Quarter 3" in quarter_choice:
-                    months_filter = [7, 8, 9]
-                else:
-                    months_filter = [10, 11, 12]
-
-                df_vat_q = df_fin[
-                    (df_fin["DATE"].dt.year == vat_year)
-                    & (df_fin["DATE"].dt.month.isin(months_filter))
-                ]
+                # Filter dates according to your exact custom quarters
+                if "March to May" in quarter_choice:
+                    df_vat_q = df_fin[
+                        (df_fin["DATE"].dt.year == vat_year)
+                        & (df_fin["DATE"].dt.month.isin([3, 4, 5]))
+                    ]
+                elif "June to August" in quarter_choice:
+                    df_vat_q = df_fin[
+                        (df_fin["DATE"].dt.year == vat_year)
+                        & (df_fin["DATE"].dt.month.isin([6, 7, 8]))
+                    ]
+                elif "September to November" in quarter_choice:
+                    df_vat_q = df_fin[
+                        (df_fin["DATE"].dt.year == vat_year)
+                        & (df_fin["DATE"].dt.month.isin([9, 10, 11]))
+                    ]
+                else:  # December to February cross-year quarter
+                    df_vat_q = df_fin[
+                        (
+                            (df_fin["DATE"].dt.year == vat_year)
+                            & (df_fin["DATE"].dt.month == 12)
+                        )
+                        | (
+                            (df_fin["DATE"].dt.year == vat_year + 1)
+                            & (df_fin["DATE"].dt.month.isin([1, 2]))
+                        )
+                    ]
 
                 output_vat = df_vat_q["INCOME_VAT"].sum() if "INCOME_VAT" in df_vat_q.columns else 0.0
                 input_vat = df_vat_q["EXPENSE_VAT"].sum() if "EXPENSE_VAT" in df_vat_q.columns else 0.0
