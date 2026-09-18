@@ -1,17 +1,18 @@
 import io
+import re
 import datetime
 import sqlite3
 import pandas as pd
 import streamlit as st
 
-# --- PAGE SETUP ---
+# --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Ain Renov Technical Services LLC - ERP",
+    page_title="Ain Renov ERP - Financial & Operations Tracker",
     page_icon="🏢",
     layout="wide",
 )
 
-# --- DATABASE ENGINE & PERSISTENT STORAGE SETUP ---
+# --- DATABASE PERSISTENCE SETUP ---
 DB_FILE = "app_database.db"
 
 
@@ -23,7 +24,7 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
 
-    # 1. Financials Table (Includes PAYMENT MODE / CASH and PETTY CASH flag)
+    # Financials Table
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS financials (
@@ -46,7 +47,7 @@ def init_db():
     """
     )
 
-    # 2. Projects Table
+    # Projects Table
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS projects (
@@ -61,7 +62,7 @@ def init_db():
     """
     )
 
-    # 3. Quotations Table
+    # Quotations Table
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS quotations (
@@ -79,7 +80,7 @@ def init_db():
     """
     )
 
-    # 4. Petty Cash Table
+    # Petty Cash Table
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS petty_cash (
@@ -96,7 +97,7 @@ def init_db():
     """
     )
 
-    # 5. Salaries Manual Register & Agreements Table
+    # Salary Profiles Table
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS salary_profiles (
@@ -116,7 +117,7 @@ def init_db():
 init_db()
 
 
-# --- HELPER DATABASE UTILITIES ---
+# --- DATABASE HELPER FUNCTIONS ---
 def load_db_table(table_name):
     conn = get_connection()
     df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
@@ -140,7 +141,7 @@ def delete_db_row(table_name, row_id):
     conn.close()
 
 
-# --- TEMPLATE GENERATORS ---
+# --- TEMPLATE GENERATORS WITH EXACT COLUMN MAPPING ---
 def generate_financial_template():
     df_temp = pd.DataFrame(
         [
@@ -150,7 +151,7 @@ def generate_financial_template():
                 "DATE": "2026-03-15",
                 "PAYMENT DATE": "2026-03-20",
                 "BILL/ INVOICE NUMBER": "INV-1001",
-                "PARTICULARS": "A/C Maintenance Advance Payment",
+                "PARTICULARS": "A/C Maintenance Revenue",
                 "PAYMENT MODE (Cash/Bank)": "Bank Transfer",
                 "IS PETTY CASH (YES/NO)": "NO",
                 "Capital/ Income": 10000.0,
@@ -189,10 +190,10 @@ def generate_project_template():
         [
             {
                 "SL_NO": 1,
-                "Project_Name": "Zabeel Villa Maintenance",
-                "Project_Value": 34000.0,
-                "VAT": 1700.0,
-                "Total_Amount": 35700.0,
+                "Project_Name": "Zabeel Villa Renovation",
+                "Project_Value": 50000.0,
+                "VAT": 2500.0,
+                "Total_Amount": 52500.0,
                 "Status": "Active",
             }
         ]
@@ -209,13 +210,13 @@ def generate_quotation_template():
     df_temp = pd.DataFrame(
         [
             {
-                "Quotation_ID": "Q-2026-01",
+                "Quotation_ID": "Q-2026-001",
                 "Client_Name": "Emaar Properties",
-                "Project_Name": "Marina Tower HVAC Renovation",
+                "Project_Name": "Downtown Tower Maintenance",
                 "Quotation_Date": "2026-03-01",
                 "Expected_Closure_Date": "2026-04-15",
-                "Followup_Reminder_Date": "2026-03-28",
-                "Quotation_Amount": 45000.0,
+                "Followup_Reminder_Date": "2026-03-25",
+                "Quotation_Amount": 75000.0,
                 "Feedback_Status": "In Process",
                 "Notes": "Initial quotation submitted.",
             }
@@ -233,12 +234,12 @@ def generate_petty_cash_template():
             {
                 "SL NO": 1,
                 "DATE": "2026-03-01",
-                "VOUCHER NO": "PCV-001",
-                "DESCRIPTION": "Opening Cash Float Replenishment",
-                "CASH IN": 2000.0,
-                "CASH OUT": 0.0,
-                "BALANCE": 2000.0,
-                "REMARKS": "From Main Bank Account",
+                "VOUCHER NO": "PCV-101",
+                "DESCRIPTION": "Office Refreshment Expense",
+                "CASH IN": 0.0,
+                "CASH OUT": 150.0,
+                "BALANCE": 1850.0,
+                "REMARKS": "Paid in cash",
             }
         ]
     )
@@ -248,35 +249,107 @@ def generate_petty_cash_template():
     return buffer.getvalue()
 
 
-# --- SIDEBAR & FILE UPLOAD HANDLERS ---
-st.sidebar.title("Ain Renov ERP System")
+# --- FLEXIBLE COLUMN MAPPING ENGINE ---
+def map_financial_columns(df):
+    mapping = {}
+    for col in df.columns:
+        c_clean = str(col).strip().upper()
+        if "SL" in c_clean or "S.NO" in c_clean:
+            mapping[col] = "sl_no"
+        elif "YES" in c_clean or "NO" in c_clean:
+            mapping[col] = "yes_no"
+        elif c_clean == "DATE":
+            mapping[col] = "date"
+        elif "PAYMENT DATE" in c_clean:
+            mapping[col] = "payment_date"
+        elif "BILL" in c_clean or "INVOICE" in c_clean:
+            mapping[col] = "bill_no"
+        elif "PARTICULAR" in c_clean or "DESC" in c_clean:
+            mapping[col] = "particulars"
+        elif "MODE" in c_clean or "CASH/BANK" in c_clean:
+            mapping[col] = "payment_mode"
+        elif "PETTY" in c_clean:
+            mapping[col] = "is_petty_cash"
+        elif "CAPITAL" in c_clean or "INCOME" in c_clean:
+            mapping[col] = "income_amount"
+        elif "EXPENSE" in c_clean:
+            mapping[col] = "expense_amount"
+        elif "VAT.1" in c_clean:
+            mapping[col] = "expense_vat"
+        elif "VAT" in c_clean:
+            mapping[col] = "income_vat"
+        elif "NET AMOUNT.1" in c_clean or "NET.1" in c_clean:
+            mapping[col] = "expense_net"
+        elif "NET" in c_clean:
+            mapping[col] = "income_net"
+    return mapping
+
+
+# --- SIDEBAR & FILE UPLOAD ---
+st.sidebar.title("Ain Renov ERP")
 st.sidebar.subheader("Dubai, UAE")
 
 nav = st.sidebar.radio(
-    "Go To Module",
+    "Navigation Menu",
     [
-        "Overview",
-        "Data Management & Templates",
-        "P&L & Financials (YoY Analysis)",
-        "VAT & Corporate Tax Compliance",
-        "Petty Cash Tracker",
+        "Overview & Financial Statements",
+        "Data Import, Export & Clear",
+        "P&L (YoY Analysis)",
+        "VAT & Corporate Tax Returns",
+        "Petty Cash Ledger",
         "Project Profitability",
         "Quotation Tracker",
         "Staff Salaries Tracker",
-        "Document Generator (Invoice/LPO)",
+        "Document Generator",
     ],
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📥 Upload & Append Excel Files")
+st.sidebar.subheader("📥 Upload Data Files")
 
 up_fin = st.sidebar.file_uploader("Upload Financial Ledger (.xlsx)", type=["xlsx"])
-if up_fin and st.sidebar.button("Process & Save Financial File"):
+if up_fin and st.sidebar.button("Save & Auto-Populate Financial Data"):
     try:
-        df_u = pd.read_excel(up_fin).dropna(how="all", axis=1)
+        df_u = pd.read_excel(up_fin)
+        col_map = map_financial_columns(df_u)
+        df_renamed = df_u.rename(columns=col_map)
+
         conn = get_connection()
         c = conn.cursor()
-        for idx, r in df_u.iterrows():
+
+        for idx, r in df_renamed.iterrows():
+            d_val = str(r.get("date", ""))
+            if pd.isna(r.get("date")):
+                d_val = str(datetime.date.today())
+
+            inc_amt = float(r.get("income_amount", 0.0) or 0.0)
+            inc_vat = (
+                float(r.get("income_vat", 0.0) or 0.0)
+                if "income_vat" in r
+                else inc_amt * 0.05
+            )
+            inc_net = (
+                float(r.get("income_net", 0.0) or 0.0)
+                if "income_net" in r
+                else inc_amt + inc_vat
+            )
+
+            exp_amt = float(r.get("expense_amount", 0.0) or 0.0)
+            exp_vat = (
+                float(r.get("expense_vat", 0.0) or 0.0)
+                if "expense_vat" in r
+                else exp_amt * 0.05
+            )
+            exp_net = (
+                float(r.get("expense_net", 0.0) or 0.0)
+                if "expense_net" in r
+                else exp_amt + exp_vat
+            )
+
+            pmode = str(r.get("payment_mode", "Bank Transfer"))
+            is_petty = str(r.get("is_petty_cash", "NO")).upper()
+            particulars_text = str(r.get("particulars", ""))
+
             c.execute(
                 """
                 INSERT INTO financials (
@@ -286,182 +359,202 @@ if up_fin and st.sidebar.button("Process & Save Financial File"):
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
-                    int(r.get("SL NO", idx + 1)),
-                    str(r.get("YES/NO", "YES")),
-                    str(r.get("DATE", "")),
-                    str(r.get("PAYMENT DATE", "")),
-                    str(r.get("BILL/ INVOICE NUMBER", "")),
-                    str(r.get("PARTICULARS", "")),
-                    str(r.get("PAYMENT MODE (Cash/Bank)", "Bank Transfer")),
-                    str(r.get("IS PETTY CASH (YES/NO)", "NO")),
-                    float(r.get("Capital/ Income", 0.0)),
-                    float(r.get("VAT", 0.0)),
-                    float(r.get("NET AMOUNT", 0.0)),
-                    float(r.get("Expenses", 0.0)),
-                    float(r.get("VAT.1", 0.0)),
-                    float(r.get("Net Amount", 0.0)),
+                    int(r.get("sl_no", idx + 1) or (idx + 1)),
+                    str(r.get("yes_no", "YES")),
+                    d_val,
+                    str(r.get("payment_date", d_val)),
+                    str(r.get("bill_no", f"INV-{idx+1}")),
+                    particulars_text,
+                    pmode,
+                    is_petty,
+                    inc_amt,
+                    inc_vat,
+                    inc_net,
+                    exp_amt,
+                    exp_vat,
+                    exp_net,
                 ),
             )
+
+            # Auto-populate to Petty Cash module if flagged
+            if is_petty == "YES" or "CASH" in pmode.upper():
+                c.execute(
+                    """
+                    INSERT INTO petty_cash (sl_no, date, voucher_no, description, cash_in, cash_out, balance, remarks)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        int(r.get("sl_no", idx + 1) or (idx + 1)),
+                        d_val,
+                        str(r.get("bill_no", "PCV-AUTO")),
+                        particulars_text,
+                        inc_net,
+                        exp_net,
+                        0.0,
+                        "Auto-populated from Financial Upload",
+                    ),
+                )
+
         conn.commit()
         conn.close()
-        st.sidebar.success("Financial file data permanently added!")
-    except Exception as e:
-        st.sidebar.error(f"Error saving financial file: {e}")
-
-up_proj = st.sidebar.file_uploader("Upload Project File (.xlsx)", type=["xlsx"])
-if up_proj and st.sidebar.button("Process & Save Project File"):
-    try:
-        xls = pd.ExcelFile(up_proj)
-        df_p = (
-            pd.read_excel(
-                xls, sheet_name="Our Profit and Pending Payments", skiprows=1
-            )
-            if "Our Profit and Pending Payments" in xls.sheet_names
-            else pd.read_excel(up_proj)
+        st.sidebar.success(
+            "Financial Ledger uploaded & populated to P&L, VAT, Tax, Salary, and Petty Cash modules!"
         )
-        conn = get_connection()
-        c = conn.cursor()
-        for idx, r in df_p.iterrows():
-            c.execute(
-                """
-                INSERT INTO projects (sl_no, project_name, project_value, vat, total_amount, status)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    idx + 1,
-                    str(r.iloc[1] if len(r) > 1 else "Project"),
-                    float(r.iloc[2] if len(r) > 2 else 0.0),
-                    float(r.iloc[3] if len(r) > 3 else 0.0),
-                    float(r.iloc[4] if len(r) > 4 else 0.0),
-                    "Active",
-                ),
-            )
-        conn.commit()
-        conn.close()
-        st.sidebar.success("Project file data permanently added!")
+        st.rerun()
     except Exception as e:
-        st.sidebar.error(f"Error saving project file: {e}")
+        st.sidebar.error(f"Error processing file: {e}")
 
-up_petty = st.sidebar.file_uploader(
-    "Upload Petty Cash File (.xlsx)", type=["xlsx"]
-)
-if up_petty and st.sidebar.button("Process & Save Petty Cash File"):
+up_q = st.sidebar.file_uploader("Upload Quotations File (.xlsx)", type=["xlsx"])
+if up_q and st.sidebar.button("Save & Populate Quotations"):
     try:
-        df_pc = pd.read_excel(up_petty)
+        df_q = pd.read_excel(up_q)
         conn = get_connection()
         c = conn.cursor()
-        for idx, r in df_pc.iterrows():
+        for idx, r in df_q.iterrows():
             c.execute(
                 """
-                INSERT INTO petty_cash (sl_no, date, voucher_no, description, cash_in, cash_out, balance, remarks)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO quotations (
+                    quotation_id, client_name, project_name, quotation_date,
+                    expected_closure_date, followup_reminder_date, quotation_amount, feedback_status, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
-                    int(r.get("SL NO", idx + 1)),
-                    str(r.get("DATE", "")),
-                    str(r.get("VOUCHER NO", "")),
-                    str(r.get("DESCRIPTION", "")),
-                    float(r.get("CASH IN", 0.0)),
-                    float(r.get("CASH OUT", 0.0)),
-                    float(r.get("BALANCE", 0.0)),
-                    str(r.get("REMARKS", "")),
+                    str(r.get("Quotation_ID", f"Q-{idx+100}")),
+                    str(r.get("Client_Name", "")),
+                    str(r.get("Project_Name", "")),
+                    str(r.get("Quotation_Date", datetime.date.today())),
+                    str(r.get("Expected_Closure_Date", datetime.date.today())),
+                    str(r.get("Followup_Reminder_Date", datetime.date.today())),
+                    float(r.get("Quotation_Amount", 0.0)),
+                    str(r.get("Feedback_Status", "In Process")),
+                    str(r.get("Notes", "")),
                 ),
             )
         conn.commit()
         conn.close()
-        st.sidebar.success("Petty Cash file data permanently added!")
+        st.sidebar.success("Quotations uploaded and saved!")
+        st.rerun()
     except Exception as e:
-        st.sidebar.error(f"Error saving petty cash file: {e}")
+        st.sidebar.error(f"Error loading quotations: {e}")
 
 
-# --- MODULE 1: OVERVIEW ---
-if nav == "Overview":
-    st.title("Ain Renov Technical Services LLC - Executive Dashboard")
+# --- MODULE 1: OVERVIEW & DASHBOARD ---
+if nav == "Overview & Financial Statements":
+    st.title(" Ain Renov Technical Services LLC - ERP Summary")
 
     df_fin = load_db_table("financials")
     df_proj = load_db_table("projects")
+    df_quot = load_db_table("quotations")
 
-    col1, col2, col3, col4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
 
-    if not df_fin.empty:
-        tot_inc = df_fin["income_net"].sum()
-        tot_exp = df_fin["expense_net"].sum()
-        net_prof = tot_inc - tot_exp
+    tot_inc = df_fin["income_net"].sum() if not df_fin.empty else 0.0
+    tot_exp = df_fin["expense_net"].sum() if not df_fin.empty else 0.0
+    net_prof = tot_inc - tot_exp
 
-        cash_df = df_fin[
-            df_fin["payment_mode"].str.lower().str.contains("cash", na=False)
+    cash_df = (
+        df_fin[
+            (df_fin["payment_mode"].str.upper().str.contains("CASH", na=False))
+            | (df_fin["is_petty_cash"].str.upper() == "YES")
         ]
-        cash_bal = cash_df["income_net"].sum() - cash_df["expense_net"].sum()
+        if not df_fin.empty
+        else pd.DataFrame()
+    )
+    cash_bal = (
+        (cash_df["income_net"].sum() - cash_df["expense_net"].sum())
+        if not cash_df.empty
+        else 0.0
+    )
 
-        col1.metric("Total Overall Income", f"AED {tot_inc:,.2f}")
-        col2.metric("Total Overall Expenses", f"AED {tot_exp:,.2f}")
-        col3.metric("Overall Net Profit", f"AED {net_prof:,.2f}")
-        col4.metric("Cash Balance (In/Out)", f"AED {cash_bal:,.2f}")
-    else:
-        col1.metric("Total Overall Income", "AED 0.00")
-        col2.metric("Total Overall Expenses", "AED 0.00")
-        col3.metric("Overall Net Profit", "AED 0.00")
-        col4.metric("Cash Balance (In/Out)", "AED 0.00")
+    c1.metric("Total Income (Net AED)", f"AED {tot_inc:,.2f}")
+    c2.metric("Total Expenses (Net AED)", f"AED {tot_exp:,.2f}")
+    c3.metric("Net Profit / (Loss)", f"AED {net_prof:,.2f}")
+    c4.metric("Cash Balance On Hand", f"AED {cash_bal:,.2f}")
 
     st.markdown("---")
-    st.subheader("Project Portfolio Summary")
-    if not df_proj.empty:
-        st.dataframe(df_proj, use_container_width=True)
-    else:
-        st.info("No active project data registered.")
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.subheader("Active Projects Summary")
+        if not df_proj.empty:
+            st.dataframe(df_proj, use_container_width=True)
+        else:
+            st.info("No active projects stored.")
+
+    with col_b:
+        st.subheader("Quotations Pipeline Summary")
+        if not df_quot.empty:
+            st.dataframe(
+                df_quot[
+                    [
+                        "quotation_id",
+                        "client_name",
+                        "quotation_amount",
+                        "feedback_status",
+                    ]
+                ],
+                use_container_width=True,
+            )
+        else:
+            st.info("No active proposals stored.")
 
 
-# --- MODULE 2: DATA MANAGEMENT & TEMPLATES ---
-elif nav == "Data Management & Templates":
-    st.title("⚙️ Data Management & Downloadable Templates")
+# --- MODULE 2: DATA IMPORT, EXPORT & CLEAR ---
+elif nav == "Data Import, Export & Clear":
+    st.title("⚙️ Data Management, Downloads & Data Deletions")
 
-    st.markdown("### 1. Download Standard Blank Excel File Templates")
-    t_col1, t_col2, t_col3, t_col4 = st.columns(4)
-    with t_col1:
+    st.markdown("### 1. Download Blank Templates")
+    t1, t2, t3, t4 = st.columns(4)
+    with t1:
         st.download_button(
-            label="Financial Template (.xlsx)",
-            data=generate_financial_template(),
-            file_name="Ain_Renov_Financial_Template.xlsx",
+            "Financial Template (.xlsx)",
+            generate_financial_template(),
+            "Financial_Template.xlsx",
         )
-    with t_col2:
+    with t2:
         st.download_button(
-            label="Project Template (.xlsx)",
-            data=generate_project_template(),
-            file_name="Ain_Renov_Project_Template.xlsx",
+            "Project Template (.xlsx)",
+            generate_project_template(),
+            "Project_Template.xlsx",
         )
-    with t_col3:
+    with t3:
         st.download_button(
-            label="Quotation Template (.xlsx)",
-            data=generate_quotation_template(),
-            file_name="Ain_Renov_Quotation_Template.xlsx",
+            "Quotation Template (.xlsx)",
+            generate_quotation_template(),
+            "Quotation_Template.xlsx",
         )
-    with t_col4:
+    with t4:
         st.download_button(
-            label="Petty Cash Template (.xlsx)",
-            data=generate_petty_cash_template(),
-            file_name="Ain_Renov_Petty_Cash_Template.xlsx",
+            "Petty Cash Template (.xlsx)",
+            generate_petty_cash_template(),
+            "Petty_Cash_Template.xlsx",
         )
 
     st.markdown("---")
     st.markdown("### 2. Manual Data Entry Forms")
-
-    tab_f, tab_p, tab_pc = st.tabs(
-        ["Add Financial Transaction", "Add Project Record", "Add Petty Cash Entry"]
+    tab_f, tab_p, tab_pc, tab_q = st.tabs(
+        [
+            "Financial Transaction",
+            "New Project",
+            "Petty Cash Transaction",
+            "Quotation Proposal",
+        ]
     )
 
     with tab_f:
-        with st.form("form_fin"):
-            f_type = st.selectbox("Transaction Type", ["Expense", "Income"])
-            f_date = st.date_input("Transaction Date")
-            f_inv = st.text_input("Invoice / Voucher No", "INV-")
-            f_part = st.text_input("Particulars", "")
-            f_mode = st.selectbox("Payment Mode", ["Bank Transfer", "Cash", "Cheque"])
-            f_is_petty = st.selectbox("Is Petty Cash Transaction?", ["NO", "YES"])
-            f_amt = st.number_input("Amount (Excl VAT AED)", min_value=0.0, value=0.0)
+        with st.form("f_add_form"):
+            ft_type = st.selectbox("Type", ["Expense", "Income"])
+            ft_date = st.date_input("Date", datetime.date.today())
+            ft_bill = st.text_input("Bill / Invoice No", "INV-")
+            ft_part = st.text_input("Particulars (Description)", "")
+            ft_mode = st.selectbox("Payment Mode", ["Bank Transfer", "Cash", "Cheque"])
+            ft_is_petty = st.selectbox("Is Petty Cash?", ["NO", "YES"])
+            ft_amt = st.number_input("Amount (Excl VAT AED)", min_value=0.0, value=0.0)
 
-            if st.form_submit_button("Save Financial Entry"):
-                f_vat = f_amt * 0.05
-                f_net = f_amt + f_vat
+            if st.form_submit_button("Save & Populate System"):
+                ft_vat = ft_amt * 0.05
+                ft_net = ft_amt + ft_vat
+
                 conn = get_connection()
                 c = conn.cursor()
                 c.execute(
@@ -475,27 +568,22 @@ elif nav == "Data Management & Templates":
                     (
                         1,
                         "YES",
-                        str(f_date),
-                        str(f_date),
-                        f_inv,
-                        f_part,
-                        f_mode,
-                        f_is_petty,
-                        f_amt if f_type == "Income" else 0.0,
-                        f_vat if f_type == "Income" else 0.0,
-                        f_net if f_type == "Income" else 0.0,
-                        f_amt if f_type == "Expense" else 0.0,
-                        f_vat if f_type == "Expense" else 0.0,
-                        f_net if f_type == "Expense" else 0.0,
+                        str(ft_date),
+                        str(ft_date),
+                        ft_bill,
+                        ft_part,
+                        ft_mode,
+                        ft_is_petty,
+                        ft_amt if ft_type == "Income" else 0.0,
+                        ft_vat if ft_type == "Income" else 0.0,
+                        ft_net if ft_type == "Income" else 0.0,
+                        ft_amt if ft_type == "Expense" else 0.0,
+                        ft_vat if ft_type == "Expense" else 0.0,
+                        ft_net if ft_type == "Expense" else 0.0,
                     ),
                 )
-                conn.commit()
-                conn.close()
 
-                # Sync directly to Petty Cash table if marked YES
-                if f_is_petty == "YES":
-                    conn = get_connection()
-                    c = conn.cursor()
+                if ft_is_petty == "YES" or ft_mode == "Cash":
                     c.execute(
                         """
                         INSERT INTO petty_cash (sl_no, date, voucher_no, description, cash_in, cash_out, balance, remarks)
@@ -503,24 +591,25 @@ elif nav == "Data Management & Templates":
                     """,
                         (
                             1,
-                            str(f_date),
-                            f_inv,
-                            f_part,
-                            f_net if f_type == "Income" else 0.0,
-                            f_net if f_type == "Expense" else 0.0,
+                            str(ft_date),
+                            ft_bill,
+                            ft_part,
+                            ft_net if ft_type == "Income" else 0.0,
+                            ft_net if ft_type == "Expense" else 0.0,
                             0.0,
-                            f"Synced from Financials ({f_mode})",
+                            "Manual Entry - Auto Populated",
                         ),
                     )
-                    conn.commit()
-                    conn.close()
 
-                st.success("Financial entry saved!")
+                conn.commit()
+                conn.close()
+                st.success("Financial transaction saved & populated across modules!")
+                st.rerun()
 
     with tab_p:
-        with st.form("form_proj"):
+        with st.form("p_add_form"):
             p_name = st.text_input("Project Name", "")
-            p_val = st.number_input("Project Contract Value (Excl VAT AED)", min_value=0.0)
+            p_val = st.number_input("Project Value (Excl VAT AED)", min_value=0.0)
             if st.form_submit_button("Save Project"):
                 p_vat = p_val * 0.05
                 p_tot = p_val + p_vat
@@ -535,11 +624,12 @@ elif nav == "Data Management & Templates":
                 )
                 conn.commit()
                 conn.close()
-                st.success("Project entry saved!")
+                st.success("Project added successfully!")
+                st.rerun()
 
     with tab_pc:
-        with st.form("form_pc"):
-            pc_date = st.date_input("Date")
+        with st.form("pc_add_form"):
+            pc_date = st.date_input("Date", datetime.date.today())
             pc_vno = st.text_input("Voucher No", "PCV-")
             pc_desc = st.text_input("Description", "")
             pc_type = st.selectbox("Type", ["Cash Out (Expense)", "Cash In (Top-Up)"])
@@ -566,32 +656,81 @@ elif nav == "Data Management & Templates":
                 )
                 conn.commit()
                 conn.close()
-                st.success("Petty Cash transaction recorded!")
+                st.success("Petty Cash recorded!")
+                st.rerun()
+
+    with tab_q:
+        with st.form("q_add_form"):
+            q_cname = st.text_input("Client Name", "")
+            q_pname = st.text_input("Project Name", "")
+            q_amt = st.number_input("Quotation Amount (AED)", min_value=0.0)
+            q_date = st.date_input("Quotation Date", datetime.date.today())
+            q_close = st.date_input(
+                "Expected Closure Date",
+                datetime.date.today() + datetime.timedelta(days=30),
+            )
+            q_rem = st.date_input(
+                "Followup Reminder Date",
+                datetime.date.today() + datetime.timedelta(days=7),
+            )
+            q_status = st.selectbox(
+                "Feedback Status", ["In Process", "Closed - Won", "Closed - Lost"]
+            )
+            q_notes = st.text_area("Notes", "")
+            if st.form_submit_button("Save Proposal"):
+                conn = get_connection()
+                c = conn.cursor()
+                c.execute(
+                    """
+                    INSERT INTO quotations (
+                        quotation_id, client_name, project_name, quotation_date,
+                        expected_closure_date, followup_reminder_date, quotation_amount, feedback_status, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        f"Q-{datetime.datetime.now().strftime('%M%S')}",
+                        q_cname,
+                        q_pname,
+                        str(q_date),
+                        str(q_close),
+                        str(q_rem),
+                        q_amt,
+                        q_status,
+                        q_notes,
+                    ),
+                )
+                conn.commit()
+                conn.close()
+                st.success("Quotation saved!")
+                st.rerun()
 
     st.markdown("---")
     st.markdown("### 3. Clear Data Section Wise")
-    st.caption("🚨 Warning: Deleting section data removes records permanently from the local database.")
-    c_col1, c_col2, c_col3, c_col4 = st.columns(4)
-    with c_col1:
+    cl1, cl2, cl3, cl4 = st.columns(4)
+    with cl1:
         if st.button("Delete All Financial Data"):
             clear_db_table("financials")
-            st.success("Financial database cleared!")
-    with c_col2:
+            st.success("Financials cleared!")
+            st.rerun()
+    with cl2:
         if st.button("Delete All Project Data"):
             clear_db_table("projects")
-            st.success("Project database cleared!")
-    with c_col3:
+            st.success("Projects cleared!")
+            st.rerun()
+    with cl3:
         if st.button("Delete All Quotations"):
             clear_db_table("quotations")
-            st.success("Quotation database cleared!")
-    with c_col4:
+            st.success("Quotations cleared!")
+            st.rerun()
+    with cl4:
         if st.button("Delete All Petty Cash Data"):
             clear_db_table("petty_cash")
-            st.success("Petty cash database cleared!")
+            st.success("Petty Cash cleared!")
+            st.rerun()
 
 
-# --- MODULE 3: P&L & FINANCIALS (YOY ANALYSIS) ---
-elif nav == "P&L & Financials (YoY Analysis)":
+# --- MODULE 3: P&L (YOY ANALYSIS) ---
+elif nav == "P&L (YoY Analysis)":
     st.title("Year-over-Year (YoY) Profit & Loss Statement")
 
     df_fin = load_db_table("financials")
@@ -599,24 +738,23 @@ elif nav == "P&L & Financials (YoY Analysis)":
     if not df_fin.empty:
         df_fin["date_dt"] = pd.to_datetime(df_fin["date"], errors="coerce")
 
-        # Payment Mode & Petty Cash Filters
         f_col1, f_col2 = st.columns(2)
         with f_col1:
-            mode_opt = st.multiselect(
-                "Filter Payment Mode",
+            modes = st.multiselect(
+                "Filter Payment Modes",
                 options=df_fin["payment_mode"].unique(),
                 default=df_fin["payment_mode"].unique(),
             )
         with f_col2:
-            petty_opt = st.multiselect(
+            petty_filter = st.multiselect(
                 "Include Petty Cash Records",
                 options=df_fin["is_petty_cash"].unique(),
                 default=df_fin["is_petty_cash"].unique(),
             )
 
         df_filtered = df_fin[
-            (df_fin["payment_mode"].isin(mode_opt))
-            & (df_fin["is_petty_cash"].isin(petty_opt))
+            (df_fin["payment_mode"].isin(modes))
+            & (df_fin["is_petty_cash"].isin(petty_filter))
         ].copy()
 
         df_filtered["Year"] = df_filtered["date_dt"].dt.year
@@ -625,93 +763,93 @@ elif nav == "P&L & Financials (YoY Analysis)":
         )
 
         if years:
-            sel_year = st.selectbox("Select Financial Year", years, index=len(years) - 1)
+            sel_y = st.selectbox("Select Financial Year", years, index=len(years) - 1)
 
-            curr_df = df_filtered[df_filtered["Year"] == sel_year]
-            tot_inc = curr_df["income_net"].sum()
-            tot_exp = curr_df["expense_net"].sum()
-            net_prof = tot_inc - tot_exp
+            curr_df = df_filtered[df_filtered["Year"] == sel_y]
+            inc_tot = curr_df["income_net"].sum()
+            exp_tot = curr_df["expense_net"].sum()
+            prof_tot = inc_tot - exp_tot
 
-            prev_df = df_filtered[df_filtered["Year"] == (sel_year - 1)]
-            tot_inc_prev = prev_df["income_net"].sum() if not prev_df.empty else 0.0
-            inc_growth = (
-                ((tot_inc - tot_inc_prev) / tot_inc_prev * 100) if tot_inc_prev > 0 else 0
-            )
+            prev_df = df_filtered[df_filtered["Year"] == (sel_y - 1)]
+            prev_inc = prev_df["income_net"].sum() if not prev_df.empty else 0.0
+            growth = (((inc_tot - prev_inc) / prev_inc) * 100) if prev_inc > 0 else 0.0
 
-            p1, p2, p3 = st.columns(3)
-            p1.metric("Total Net Revenue", f"AED {tot_inc:,.2f}", f"{inc_growth:+.1f}% YoY")
-            p2.metric("Total Expenses", f"AED {tot_exp:,.2f}")
-            p3.metric("Net Operational Profit", f"AED {net_prof:,.2f}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Revenue", f"AED {inc_tot:,.2f}", f"{growth:+.1f}% YoY")
+            m2.metric("Total Operational Expenses", f"AED {exp_tot:,.2f}")
+            m3.metric("Net Profit", f"AED {prof_tot:,.2f}")
 
             st.markdown("---")
-            st.subheader(f"Financial Ledger Breakdown ({sel_year})")
+            st.subheader(f"Financial Ledger Breakdown ({sel_y})")
             st.dataframe(curr_df, use_container_width=True)
 
-            # Option to delete single row entry
             del_id = st.number_input(
-                "Enter ID of entry to delete from ledger", min_value=1, step=1
+                "Enter Record ID to delete from Financials", min_value=1, step=1
             )
-            if st.button("Delete Financial Entry"):
+            if st.button("Delete Financial Row"):
                 delete_db_row("financials", del_id)
-                st.success(f"Financial entry ID {del_id} deleted!")
+                st.success(f"Record {del_id} deleted!")
+                st.rerun()
         else:
-            st.warning("No records found starting from year 2024 onwards.")
+            st.warning("No records starting from 2024 onwards.")
     else:
-        st.info("No financial data present in database.")
+        st.info("No financial data found in database. Upload or enter data to auto-populate.")
 
 
-# --- MODULE 4: VAT & CORPORATE TAX COMPLIANCE ---
-elif nav == "VAT & Corporate Tax Compliance":
+# --- MODULE 4: VAT & CORPORATE TAX RETURNS ---
+elif nav == "VAT & Corporate Tax Returns":
     st.title("UAE VAT & Corporate Tax Compliance (2024 Onwards)")
 
     df_fin = load_db_table("financials")
 
     tab1, tab2 = st.tabs(
-        ["1. Corporate Tax Assessment (Jan–Dec)", "2. VAT Quarter-on-Quarter Returns"]
+        [
+            "1. Corporate Tax Assessment (Jan to Dec)",
+            "2. VAT Quarter-on-Quarter Returns",
+        ]
     )
 
     with tab1:
-        st.subheader("Corporate Tax Assessment (Jan 1 to Dec 31)")
+        st.subheader("Corporate Tax Assessment (Annual Jan 1 to Dec 31)")
         if not df_fin.empty:
             df_fin["date_dt"] = pd.to_datetime(df_fin["date"], errors="coerce")
             years = sorted(
                 [int(y) for y in df_fin["date_dt"].dt.year.dropna().unique() if y >= 2024]
             )
             if years:
-                tax_year = st.selectbox("Select Corporate Tax Year", years, index=len(years) - 1)
-                df_tax = df_fin[df_fin["date_dt"].dt.year == tax_year]
+                tax_y = st.selectbox("Select Tax Year", years, index=len(years) - 1)
+                df_tax = df_fin[df_fin["date_dt"].dt.year == tax_y]
 
-                tot_inc = df_tax["income_amount"].sum()
-                tot_exp = df_tax["expense_amount"].sum()
-                net_taxable = tot_inc - tot_exp
+                rev = df_tax["income_amount"].sum()
+                exp = df_tax["expense_amount"].sum()
+                net_taxable = rev - exp
 
-                taxable_amount = max(0.0, net_taxable - 375000.0)
-                corp_tax = taxable_amount * 0.09
+                taxable_base = max(0.0, net_taxable - 375000.0)
+                corp_tax = taxable_base * 0.09
 
-                st.write(f"**Gross Revenue:** AED {tot_inc:,.2f}")
-                st.write(f"**Gross Expenses:** AED {tot_exp:,.2f}")
-                st.write(f"**Taxable Income:** AED {net_taxable:,.2f}")
+                st.write(f"**Gross Revenue:** AED {rev:,.2f}")
+                st.write(f"**Allowable Expenses:** AED {exp:,.2f}")
+                st.write(f"**Net Taxable Income:** AED {net_taxable:,.2f}")
+                st.write("**Exemption Threshold:** AED 375,000.00")
                 st.metric("Corporate Tax Payable (9%)", f"AED {corp_tax:,.2f}")
         else:
-            st.info("No financial data available.")
+            st.info("No financial data registered for tax evaluation.")
 
     with tab2:
-        st.subheader("Custom Quarter-on-Quarter VAT Returns")
-        st.caption("Filing quarters structured around FTA schedule starting from 2024 onwards.")
-
+        st.subheader("Quarter-on-Quarter Custom VAT Returns")
         if not df_fin.empty:
             df_fin["date_dt"] = pd.to_datetime(df_fin["date"], errors="coerce")
             vat_years = sorted(
                 [int(y) for y in df_fin["date_dt"].dt.year.dropna().unique() if y >= 2024]
             )
             if vat_years:
-                v_col1, v_col2 = st.columns(2)
-                with v_col1:
-                    vat_year = st.selectbox(
-                        "Select Tax Year", vat_years, index=len(vat_years) - 1, key="vy"
+                v1, v2 = st.columns(2)
+                with v1:
+                    vy = st.selectbox(
+                        "Select Year", vat_years, index=len(vat_years) - 1, key="vy_sel"
                     )
-                with v_col2:
-                    q_choice = st.selectbox(
+                with v2:
+                    q_opt = st.selectbox(
                         "Select Custom VAT Quarter",
                         [
                             "March to May Quarter (Mar - May)",
@@ -721,29 +859,29 @@ elif nav == "VAT & Corporate Tax Compliance":
                         ],
                     )
 
-                if "March to May" in q_choice:
+                if "March to May" in q_opt:
                     df_q = df_fin[
-                        (df_fin["date_dt"].dt.year == vat_year)
+                        (df_fin["date_dt"].dt.year == vy)
                         & (df_fin["date_dt"].dt.month.isin([3, 4, 5]))
                     ]
-                elif "June to August" in q_choice:
+                elif "June to August" in q_opt:
                     df_q = df_fin[
-                        (df_fin["date_dt"].dt.year == vat_year)
+                        (df_fin["date_dt"].dt.year == vy)
                         & (df_fin["date_dt"].dt.month.isin([6, 7, 8]))
                     ]
-                elif "September to November" in q_choice:
+                elif "September to November" in q_opt:
                     df_q = df_fin[
-                        (df_fin["date_dt"].dt.year == vat_year)
+                        (df_fin["date_dt"].dt.year == vy)
                         & (df_fin["date_dt"].dt.month.isin([9, 10, 11]))
                     ]
-                else:  # December to February cross-year quarter
+                else:  # Dec to Feb
                     df_q = df_fin[
                         (
-                            (df_fin["date_dt"].dt.year == vat_year)
+                            (df_fin["date_dt"].dt.year == vy)
                             & (df_fin["date_dt"].dt.month == 12)
                         )
                         | (
-                            (df_fin["date_dt"].dt.year == vat_year + 1)
+                            (df_fin["date_dt"].dt.year == vy + 1)
                             & (df_fin["date_dt"].dt.month.isin([1, 2]))
                         )
                     ]
@@ -753,117 +891,68 @@ elif nav == "VAT & Corporate Tax Compliance":
                 net_vat = out_vat - in_vat
 
                 vm1, vm2, vm3 = st.columns(3)
-                vm1.metric("Output VAT Collected", f"AED {out_vat:,.2f}")
-                vm2.metric("Input VAT Paid", f"AED {in_vat:,.2f}")
-                vm3.metric("Net VAT Payable / (Claimable)", f"AED {net_vat:,.2f}")
+                vm1.metric("Output VAT (Sales)", f"AED {out_vat:,.2f}")
+                vm2.metric("Input VAT (Expenses)", f"AED {in_vat:,.2f}")
+                vm3.metric("Net VAT Payable / (Recoverable)", f"AED {net_vat:,.2f}")
 
                 st.dataframe(df_q, use_container_width=True)
 
 
-# --- MODULE 5: PETTY CASH TRACKER ---
-elif nav == "Petty Cash Tracker":
-    st.title("💸 Petty Cash Register & Float Management")
+# --- MODULE 5: PETTY CASH LEDGER ---
+elif nav == "Petty Cash Ledger":
+    st.title("💸 Petty Cash Register & Float Control")
 
     df_pc = load_db_table("petty_cash")
 
     if not df_pc.empty:
-        tot_in = df_pc["cash_in"].sum()
-        tot_out = df_pc["cash_out"].sum()
-        bal = tot_in - tot_out
+        c_in = df_pc["cash_in"].sum()
+        c_out = df_pc["cash_out"].sum()
+        bal = c_in - c_out
 
         pm1, pm2, pm3 = st.columns(3)
-        pm1.metric("Total Float Received (Cash In)", f"AED {tot_in:,.2f}")
-        pm2.metric("Total Cash Expenses Paid (Cash Out)", f"AED {tot_out:,.2f}")
-        pm3.metric("Current Cash On Hand Balance", f"AED {bal:,.2f}")
+        pm1.metric("Total Float Received (Cash In)", f"AED {c_in:,.2f}")
+        pm2.metric("Total Disbursed (Cash Out)", f"AED {c_out:,.2f}")
+        pm3.metric("Remaining Cash Float Balance", f"AED {bal:,.2f}")
 
         st.markdown("---")
         st.subheader("Petty Cash Register Ledger")
         st.dataframe(df_pc, use_container_width=True)
 
-        st.markdown("#### Delete Individual Petty Cash Record")
-        pc_del_id = st.number_input("Enter Record ID to delete", min_value=1, step=1)
-        if st.button("Delete Record"):
+        pc_del_id = st.number_input(
+            "Enter Petty Cash Record ID to Delete", min_value=1, step=1
+        )
+        if st.button("Delete Petty Cash Entry"):
             delete_db_row("petty_cash", pc_del_id)
-            st.success(f"Petty cash record ID {pc_del_id} deleted!")
+            st.success(f"Record {pc_del_id} deleted!")
+            st.rerun()
     else:
-        st.info("No petty cash records registered.")
+        st.info("No petty cash records found. Flag 'IS PETTY CASH = YES' in financials to auto-populate.")
 
 
 # --- MODULE 6: PROJECT PROFITABILITY ---
 elif nav == "Project Profitability":
-    st.title("Project Profitability & Value Tracking")
+    st.title(" Project Profitability Tracker")
 
     df_p = load_db_table("projects")
 
     if not df_p.empty:
-        st.metric("Total Portfolio Value", f"AED {df_p['total_amount'].sum():,.2f}")
+        st.metric(
+            "Total Contract Value", f"AED {df_p['total_amount'].sum():,.2f}"
+        )
         st.dataframe(df_p, use_container_width=True)
 
-        p_del_id = st.number_input("Enter Project ID to Delete", min_value=1, step=1)
-        if st.button("Delete Project Entry"):
+        p_del_id = st.number_input("Enter Project ID to delete", min_value=1, step=1)
+        if st.button("Delete Project Record"):
             delete_db_row("projects", p_del_id)
-            st.success(f"Project ID {p_del_id} deleted!")
+            st.success("Project deleted!")
+            st.rerun()
     else:
-        st.info("No project records found.")
+        st.info("No projects registered.")
 
 
 # --- MODULE 7: QUOTATION TRACKER ---
 elif nav == "Quotation Tracker":
-    st.title("📌 Quotation & Proposal Tracker")
-
-    with st.form("new_q_form"):
-        st.subheader("1. Add New Quotation Proposal")
-        qc1, qc2, qc3 = st.columns(3)
-        with qc1:
-            q_client = st.text_input("Client Name", "")
-            q_proj = st.text_input("Project Name", "")
-            q_amt = st.number_input("Quotation Amount (AED)", min_value=0.0)
-        with qc2:
-            q_date = st.date_input("Quotation Date", datetime.date.today())
-            q_close = st.date_input(
-                "Expected Closure Date",
-                datetime.date.today() + datetime.timedelta(days=30),
-            )
-            q_rem = st.date_input(
-                "Follow-up Reminder Date",
-                datetime.date.today() + datetime.timedelta(days=7),
-            )
-        with qc3:
-            q_status = st.selectbox(
-                "Feedback Status", ["In Process", "Closed - Won", "Closed - Lost"]
-            )
-            q_notes = st.text_area("Notes", "")
-
-        if st.form_submit_button("Save Proposal"):
-            new_qid = f"Q-{datetime.datetime.now().strftime('%M%S')}"
-            conn = get_connection()
-            c = conn.cursor()
-            c.execute(
-                """
-                INSERT INTO quotations (
-                    quotation_id, client_name, project_name, quotation_date,
-                    expected_closure_date, followup_reminder_date,
-                    quotation_amount, feedback_status, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    new_qid,
-                    q_client,
-                    q_proj,
-                    str(q_date),
-                    str(q_close),
-                    str(q_rem),
-                    q_amt,
-                    q_status,
-                    q_notes,
-                ),
-            )
-            conn.commit()
-            conn.close()
-            st.success("Quotation proposal saved!")
-
-    st.markdown("---")
-    st.subheader("2. Regular Pipeline Updates")
+    st.title("📌 Quotation Proposals & Lead Follow-Up")
 
     df_q = load_db_table("quotations")
 
@@ -874,14 +963,17 @@ elif nav == "Quotation Tracker":
         q3.metric("Closed - Won", len(df_q[df_q["feedback_status"] == "Closed - Won"]))
         q4.metric("Closed - Lost", len(df_q[df_q["feedback_status"] == "Closed - Lost"]))
 
+        st.markdown("---")
+        st.subheader("Update Proposal Status & Follow-Up Reminders")
+
         for idx, row in df_q.iterrows():
             with st.expander(
-                f"ID: {row['id']} | {row['quotation_id']} - {row['client_name']} ({row['feedback_status']})"
+                f"ID: {row['id']} | Ref: {row['quotation_id']} - {row['client_name']} (AED {row['quotation_amount']:,.2f})"
             ):
                 u1, u2 = st.columns(2)
                 with u1:
-                    new_status = st.selectbox(
-                        "Update Status",
+                    new_st = st.selectbox(
+                        "Status",
                         ["In Process", "Closed - Won", "Closed - Lost"],
                         index=[
                             "In Process",
@@ -891,177 +983,205 @@ elif nav == "Quotation Tracker":
                         key=f"st_{row['id']}",
                     )
                     new_amt = st.number_input(
-                        "Update Amount",
+                        "Amount (AED)",
                         value=float(row["quotation_amount"]),
                         key=f"am_{row['id']}",
                     )
                 with u2:
-                    new_notes = st.text_area(
-                        "Update Notes", value=str(row["notes"]), key=f"nt_{row['id']}"
+                    new_rem = st.date_input(
+                        "Reminder Date",
+                        value=pd.to_datetime(row["followup_reminder_date"]).date(),
+                        key=f"dt_{row['id']}",
                     )
-                    if st.button("Save Updates", key=f"bt_{row['id']}"):
-                        conn = get_connection()
-                        c = conn.cursor()
-                        c.execute(
-                            """
-                            UPDATE quotations
-                            SET feedback_status = ?, quotation_amount = ?, notes = ?
-                            WHERE id = ?
-                        """,
-                            (new_status, new_amt, new_notes, row["id"]),
-                        )
-                        conn.commit()
-                        conn.close()
-                        st.success("Quotation updated!")
+                    new_notes = st.text_area(
+                        "Notes", value=str(row["notes"]), key=f"nt_{row['id']}"
+                    )
 
+                if st.button("Save Updates", key=f"bt_{row['id']}"):
+                    conn = get_connection()
+                    c = conn.cursor()
+                    c.execute(
+                        """
+                        UPDATE quotations
+                        SET feedback_status = ?, quotation_amount = ?, followup_reminder_date = ?, notes = ?
+                        WHERE id = ?
+                    """,
+                        (new_st, new_amt, str(new_rem), new_notes, row["id"]),
+                    )
+                    conn.commit()
+                    conn.close()
+                    st.success("Quotation details updated!")
+                    st.rerun()
+
+        st.markdown("---")
         st.dataframe(df_q, use_container_width=True)
 
-        q_del_id = st.number_input("Enter Quotation Record ID to delete", min_value=1, step=1)
+        qd_id = st.number_input("Enter Quotation ID to delete", min_value=1, step=1)
         if st.button("Delete Quotation Entry"):
-            delete_db_row("quotations", q_del_id)
-            st.success(f"Quotation ID {q_del_id} deleted!")
+            delete_db_row("quotations", qd_id)
+            st.success("Quotation entry deleted!")
+            st.rerun()
+    else:
+        st.info("No quotations registered.")
 
 
 # --- MODULE 8: STAFF SALARIES TRACKER ---
 elif nav == "Staff Salaries Tracker":
-    st.title("💵 Staff Salaries Ledger & Individual Balance Outstanding Calculator")
+    st.title("💵 Staff Salaries Tracker & Automated Ledger Reconciliation")
 
-    tab_sal1, tab_sal2 = st.tabs(
-        ["1. Salary Calculator & Financial Ledger Sync", "2. Employee Agreement Profiles"]
+    tab_s1, tab_s2 = st.tabs(
+        ["1. Salary Calculator & Ledger Disbursements", "2. Manage Employee Agreements"]
     )
 
     df_fin = load_db_table("financials")
-    df_profiles = load_db_table("salary_profiles")
+    df_prof = load_db_table("salary_profiles")
 
-    with tab_sal2:
-        st.subheader("Manage Employee Monthly Contracts & Agreements")
-        with st.form("add_emp_profile"):
-            emp_name_in = st.text_input("Employee Full Name", "")
-            emp_sal_in = st.number_input("Monthly Fixed Base Salary (AED)", min_value=0.0)
-            emp_m_in = st.number_input("Tenure Months Worked", min_value=1, value=12)
-            if st.form_submit_button("Save Employee Profile"):
-                conn = get_connection()
-                c = conn.cursor()
-                c.execute(
-                    """
-                    INSERT OR REPLACE INTO salary_profiles (employee_name, monthly_salary, months_worked)
-                    VALUES (?, ?, ?)
-                """,
-                    (emp_name_in.strip().upper(), emp_sal_in, emp_m_in),
-                )
-                conn.commit()
-                conn.close()
-                st.success(f"Profile saved for {emp_name_in}!")
+    with tab_s2:
+        st.subheader("Manage Employee Contracts & Monthly Terms")
+        with st.form("emp_prof_form"):
+            emp_name = st.text_input("Employee Name", "").strip().upper()
+            emp_sal = st.number_input("Monthly Fixed Base Salary (AED)", min_value=0.0)
+            emp_months = st.number_input("Tenure Months Worked", min_value=1, value=12)
+            if st.form_submit_button("Save Employee Terms"):
+                if emp_name:
+                    conn = get_connection()
+                    c = conn.cursor()
+                    c.execute(
+                        """
+                        INSERT OR REPLACE INTO salary_profiles (employee_name, monthly_salary, months_worked)
+                        VALUES (?, ?, ?)
+                    """,
+                        (emp_name, emp_sal, emp_months),
+                    )
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Profile saved for {emp_name}!")
+                    st.rerun()
 
-        st.dataframe(df_profiles, use_container_width=True)
-        emp_del_id = st.number_input("Enter Profile ID to delete", min_value=1, step=1)
-        if st.button("Delete Profile"):
-            delete_db_row("salary_profiles", emp_del_id)
+        st.dataframe(df_prof, use_container_width=True)
+        prof_del = st.number_input(
+            "Enter Employee Profile ID to delete", min_value=1, step=1
+        )
+        if st.button("Delete Employee Profile"):
+            delete_db_row("salary_profiles", prof_del)
             st.success("Profile deleted!")
+            st.rerun()
 
-    with tab_sal1:
+    with tab_s1:
+        # Extract salary payments automatically from financial particulars
+        extracted_salaries = []
         if not df_fin.empty:
-            sal_mask = df_fin["particulars"].str.contains(
-                "salary|salaries|payroll|wage|staff|pramoth", case=False, na=False
+            for idx, r in df_fin.iterrows():
+                p_text = str(r.get("particulars", "")).upper()
+                if any(
+                    k in p_text
+                    for k in ["SALARY", "SALARIES", "PAYROLL", "WAGE", "PRAMOTH"]
+                ):
+                    # Extract employee name using regular expressions
+                    match = re.search(r"(?:TO|FOR)\s+([A-Z\s]+?)(?:\-|$)", p_text)
+                    e_name = match.group(1).strip() if match else "UNASSIGNED STAFF"
+                    extracted_salaries.append(
+                        {
+                            "id": r["id"],
+                            "date": r["date"],
+                            "bill_no": r["bill_no"],
+                            "Employee_Name": e_name,
+                            "particulars": r["particulars"],
+                            "expense_net": r["expense_net"],
+                            "payment_mode": r["payment_mode"],
+                        }
+                    )
+
+        df_sal = pd.DataFrame(extracted_salaries)
+
+        all_names = set()
+        if not df_prof.empty:
+            all_names.update(df_prof["employee_name"].tolist())
+        if not df_sal.empty:
+            all_names.update(df_sal["Employee_Name"].tolist())
+
+        names_list = sorted(list(all_names))
+
+        if names_list:
+            sel_emp = st.selectbox("Select Employee", names_list)
+
+            # Match contracted profile parameters
+            p_match = (
+                df_prof[df_prof["employee_name"] == sel_emp]
+                if not df_prof.empty
+                else pd.DataFrame()
             )
-            df_salaries = df_fin[sal_mask].copy()
+            base_sal = (
+                float(p_match["monthly_salary"].iloc[0])
+                if not p_match.empty
+                else 3500.0
+            )
+            months_cnt = (
+                int(p_match["months_worked"].iloc[0]) if not p_match.empty else 12
+            )
 
-            if not df_salaries.empty:
-
-                def extract_name(txt):
-                    txt_str = str(txt).upper()
-                    if "TO " in txt_str:
-                        return txt_str.split("TO ")[1].split("-")[0].strip()
-                    return "UNASSIGNED STAFF"
-
-                df_salaries["Emp_Name"] = df_salaries["particulars"].apply(extract_name)
-
-                all_emps = sorted(
-                    list(
-                        set(
-                            df_salaries["Emp_Name"].unique().tolist()
-                            + (
-                                df_profiles["employee_name"].unique().tolist()
-                                if not df_profiles.empty
-                                else []
-                            )
-                        )
-                    )
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                monthly_val = st.number_input(
+                    f"Contract Monthly Salary for {sel_emp} (AED)",
+                    min_value=0.0,
+                    value=base_sal,
                 )
-
-                selected_emp = st.selectbox("Select Employee Dropdown", all_emps)
-
-                # Fetch default profile data if available
-                prof_match = df_profiles[
-                    df_profiles["employee_name"] == selected_emp
-                ] if not df_profiles.empty else pd.DataFrame()
-
-                def_sal = (
-                    float(prof_match["monthly_salary"].iloc[0])
-                    if not prof_match.empty
-                    else 3500.0
+                m_cnt = st.number_input(
+                    "Entitled Tenure Months", min_value=1, value=months_cnt
                 )
-                def_m = (
-                    int(prof_match["months_worked"].iloc[0])
-                    if not prof_match.empty
-                    else 12
+                total_entitlement = monthly_val * m_cnt
+
+            with sc2:
+                emp_paid = (
+                    df_sal[df_sal["Employee_Name"] == sel_emp]["expense_net"].sum()
+                    if not df_sal.empty
+                    else 0.0
                 )
+                outstanding_bal = total_entitlement - emp_paid
 
-                s_c1, s_c2 = st.columns(2)
-                with s_c1:
-                    m_sal = st.number_input(
-                        f"Monthly Salary for {selected_emp} (AED)",
-                        min_value=0.0,
-                        value=def_sal,
-                    )
-                    m_count = st.number_input(
-                        "Months Entitled", min_value=1, value=def_m
-                    )
-                    total_due = m_sal * m_count
+                st.metric("Total Entitlement Due", f"AED {total_entitlement:,.2f}")
+                st.metric("Total Paid (Ledger Disbursed)", f"AED {emp_paid:,.2f}")
+                st.metric("Outstanding Balance Owed", f"AED {outstanding_bal:,.2f}")
 
-                with s_c2:
-                    emp_disbursed = df_salaries[
-                        df_salaries["Emp_Name"] == selected_emp
-                    ]["expense_net"].sum()
-                    outstanding = total_due - emp_disbursed
-
-                    st.metric("Total Salary Entitlement", f"AED {total_due:,.2f}")
-                    st.metric("Total Paid via Financial Ledger", f"AED {emp_disbursed:,.2f}")
-                    st.metric("Outstanding Balance Due", f"AED {outstanding:,.2f}")
-
-                st.markdown("---")
-                st.subheader(f"Disbursement History for {selected_emp}")
+            st.markdown("---")
+            st.subheader(f"Disbursement History for {sel_emp}")
+            if not df_sal.empty:
                 st.dataframe(
-                    df_salaries[df_salaries["Emp_Name"] == selected_emp],
+                    df_sal[df_sal["Employee_Name"] == sel_emp],
                     use_container_width=True,
                 )
             else:
-                st.info("No salary entries matched in the financial ledger.")
+                st.info("No ledger disbursements matched for this employee.")
         else:
-            st.info("No financial data uploaded.")
+            st.info(
+                "No employee salary transactions found in financial particulars. Add employee contracts to calculate."
+            )
 
 
 # --- MODULE 9: DOCUMENT GENERATOR ---
-elif nav == "Document Generator (Invoice/LPO)":
-    st.title("Tax Invoice & LPO Generator")
+elif nav == "Document Generator":
+    st.title("Tax Invoice & Local Purchase Order (LPO) Generator")
 
     doc_type = st.selectbox(
-        "Select Document",
-        ["Progressive Tax Invoice", "Advance Payment Invoice", "Local Purchase Order (LPO)"],
+        "Document Type",
+        ["Progressive Tax Invoice", "Advance Tax Invoice", "Local Purchase Order (LPO)"],
     )
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        c_name = st.text_input("Client / Vendor Name", "Ain Renov Client")
-        p_title = st.text_input("Project Name", "General Technical Services")
-    with col_b:
-        amt = st.number_input("Amount (Excl VAT AED)", min_value=0.0, value=5000.0)
-        vat = amt * 0.05
-        tot = amt + vat
+    c_a, c_b = st.columns(2)
+    with c_a:
+        client_name = st.text_input("Client / Contractor Name", "Ain Renov Client")
+        project_title = st.text_input("Project Description", "HVAC Renovation Services")
+    with c_b:
+        amt_base = st.number_input(
+            "Base Amount (Excl VAT AED)", min_value=0.0, value=10000.0
+        )
+        amt_vat = amt_base * 0.05
+        amt_total = amt_base + amt_vat
 
-    st.write(f"**Base Amount:** AED {amt:,.2f}")
-    st.write(f"**5% UAE VAT:** AED {vat:,.2f}")
-    st.write(f"**Total Amount:** AED {tot:,.2f}")
+    st.write(f"**Subtotal:** AED {amt_base:,.2f}")
+    st.write(f"**UAE VAT (5%):** AED {amt_vat:,.2f}")
+    st.write(f"**Total Payable:** AED {amt_total:,.2f}")
 
-    if st.button("Generate Document"):
-        st.success(f"{doc_type} created for {c_name}!")
+    if st.button("Generate Document Printout"):
+        st.success(f"{doc_type} generated for {client_name} successfully!")
