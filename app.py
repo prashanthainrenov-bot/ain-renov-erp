@@ -75,7 +75,7 @@ st.markdown("""
 # ---------------------------------------------------------
 # SIDEBAR NAVIGATION
 # ---------------------------------------------------------
-st.sidebar.image("https://via.placeholder.com/150x50.png?text=Ain+Renov+Logo", use_column_width=True)
+st.sidebar.image("https://via.placeholder.com/150x50.png?text=Ain+Renov+Logo", use_container_width=True)
 st.sidebar.title("Ain Renov ERP")
 st.sidebar.caption("Technical Services LLC - Dubai, UAE")
 
