@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import datetime
-import os
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -13,9 +12,22 @@ st.set_page_config(
 
 DB_FILE = "financials.db"
 
-# --- DATABASE INITIALIZATION & PERSISTENCE ---
+# --- DATABASE INITIALIZATION & MIGRATION ---
 def get_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
+
+def migrate_db(conn):
+    """Checks and automatically adds missing columns to existing SQLite tables."""
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(transactions)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if "is_cash" not in columns:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN is_cash TEXT")
+    if "is_petty_cash" not in columns:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN is_petty_cash TEXT")
+        
+    conn.commit()
 
 def init_db():
     conn = get_connection()
@@ -44,6 +56,9 @@ def init_db():
             transaction_type TEXT
         )
     """)
+    
+    # Run migration check for missing columns on existing tables
+    migrate_db(conn)
     
     # 2. Quotation Tracker Table
     cursor.execute("""
@@ -208,7 +223,6 @@ upload_type = st.sidebar.selectbox(
     ["Financials Template", "Quotation Format", "Petty Cash Template", "Vendor/Client Template"]
 )
 
-# RECTIFIED: Correct Streamlit method name
 uploaded_file = st.sidebar.file_uploader(f"Upload {upload_type}", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
