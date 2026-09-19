@@ -742,302 +742,238 @@ elif menu == "Quotation Tracker":
 
 # --- 6. STAFF SALARY TRACKER ---
 elif menu == "Staff Salary Tracker":
-    st.title("Staff Salary & Payroll Outstanding Tracker")
+    st.title("Staff Payroll & Salary Management")
     
     conn = get_db_connection()
-    df_fin = pd.read_sql("SELECT * FROM financials", conn)
     
-    st.subheader("Disbursements Identified in Financial Ledger")
-    if not df_fin.empty and 'pnl_category' in df_fin.columns:
-        sal_lines = df_fin[df_fin['pnl_category'] == 'Salaries, Commissions & Partner Distributions']
-        if not sal_lines.empty:
-            cols_to_show = [c for c in ['trans_date', 'particulars', 'expense_net', 'payment_mode'] if c in sal_lines.columns]
-            st.dataframe(sal_lines[cols_to_show], use_container_width=True)
-        else:
-            st.info("No salary entries classified in financial ledger.")
-    
-    st.markdown("---")
-    with st.expander("Add Employee Salary Agreement / Monthly Record", expanded=False):
-        with st.form("sal_form"):
-            col1, col2, col3 = st.columns(3)
-            emp_name = col1.text_input("Employee Name")
-            sal_month = col2.text_input("Salary Month (e.g. March 2024)")
-            pay_date = col3.date_input("Payment Date", date.today())
+    with st.expander("Record Staff Salary Entry", expanded=True):
+        with st.form("salary_form"):
+            sc1, sc2, sc3 = st.columns(3)
+            emp_name = sc1.text_input("Employee Name")
+            sal_month = sc2.text_input("Salary Month (e.g. October 2024)", value=date.today().strftime("%B %Y"))
+            p_date = sc3.date_input("Payment Date", date.today())
             
-            col4, col5, col6 = st.columns(3)
-            basic = col4.number_input("Basic Salary (AED)", min_value=0.0)
-            allowances = col5.number_input("Allowances (AED)", min_value=0.0)
-            deductions = col6.number_input("Deductions (AED)", min_value=0.0)
+            sc4, sc5, sc6 = st.columns(3)
+            basic_sal = sc4.number_input("Basic Salary (AED)", min_value=0.0, step=500.0)
+            allowances = sc5.number_input("Allowances (AED)", min_value=0.0, step=100.0)
+            deductions = sc6.number_input("Deductions (AED)", min_value=0.0, step=100.0)
             
-            paid = st.number_input("Amount Paid (AED)", min_value=0.0)
+            sc7, sc8 = st.columns(2)
+            paid_amt = sc7.number_input("Paid Amount (AED)", min_value=0.0, step=500.0)
+            tot_due = (basic_sal + allowances) - deductions
+            outstanding = max(0.0, tot_due - paid_amt)
+            sc8.metric("Outstanding Balance (AED)", f"AED {outstanding:,.2f}")
             
-            tot_due = (basic + allowances) - deductions
-            outstanding = tot_due - paid
-            
-            if st.form_submit_button("Record Salary"):
+            if st.form_submit_button("Save Payroll Record"):
                 conn.execute('''
                     INSERT INTO salaries (employee_name, salary_month, basic_salary, allowances, deductions, paid_amount, outstanding_amount, payment_date)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (emp_name, sal_month, basic, allowances, deductions, paid, outstanding, str(pay_date)))
+                ''', (emp_name, sal_month, basic_sal, allowances, deductions, paid_amt, outstanding, str(p_date)))
+                
+                # Auto-sync to P&L financials table
+                if paid_amt > 0:
+                    conn.execute('''
+                        INSERT INTO financials (trans_date, particulars, payment_mode, expense_amount, expense_net, pnl_category)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (str(p_date), f"Salary Payment - {emp_name} ({sal_month})", "Bank Transfer", paid_amt, paid_amt, "Salaries, Commissions & Partner Distributions"))
                 
                 conn.commit()
-                st.success("Salary record created successfully!")
+                st.success("Salary payment saved and synced to Financial Ledger!")
                 st.rerun()
 
     df_sal = pd.read_sql("SELECT * FROM salaries", conn)
-    
     st.markdown("---")
-    st.subheader("Individual Employee Outstanding & Statement Analysis")
-    
+    st.subheader("Payroll Ledger")
     if not df_sal.empty:
-        emp_list = df_sal['employee_name'].unique().tolist()
-        selected_emp = st.selectbox("Select Employee to View Statement", emp_list)
-        
-        emp_df = df_sal[df_sal['employee_name'] == selected_emp]
-        
-        tot_earned = (emp_df['basic_salary'] + emp_df['allowances'] - emp_df['deductions']).sum()
-        tot_paid = emp_df['paid_amount'].sum()
-        tot_out = emp_df['outstanding_amount'].sum()
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Payable", f"AED {tot_earned:,.2f}")
-        m2.metric("Total Paid", f"AED {tot_paid:,.2f}")
-        m3.metric("Current Outstanding Balance", f"AED {tot_out:,.2f}")
-        
-        st.dataframe(emp_df, use_container_width=True)
-        
-        st.subheader("All Staff Salaries Master Summary")
         st.dataframe(df_sal, use_container_width=True)
-        
-        cs1, cs2 = st.columns(2)
-        cs1.download_button("Export Salaries to Excel", data=to_excel(df_sal), file_name="Salary_Report.xlsx")
-        
-        if cs2.button("Clear Salary Register", type="primary"):
-            conn.execute("DELETE FROM salaries")
-            conn.commit()
-            st.rerun()
+        st.download_button("Export Payroll to Excel", data=to_excel(df_sal), file_name="Staff_Salaries.xlsx")
     else:
-        st.info("No manual salary records created yet.")
+        st.info("No payroll records found.")
     conn.close()
 
 # --- 7. PETTY CASH MANAGEMENT ---
 elif menu == "Petty Cash Management":
-    st.title("Petty Cash Register & Reconciliation")
+    st.title("Petty Cash Register & Vouchers")
     
     conn = get_db_connection()
     
-    with st.expander("Upload Petty Cash Excel Sheet", expanded=False):
-        pc_file = st.file_uploader("Choose Petty Cash File", type=["xlsx", "csv"], key="pc_upload")
-        if pc_file is not None:
-            try:
-                df_pc = pd.read_excel(pc_file) if pc_file.name.endswith('.xlsx') else pd.read_csv(pc_file)
-                df_pc.columns = [c.lower().replace(" ", "_") for c in df_pc.columns]
-                
-                for _, row in df_pc.iterrows():
-                    conn.execute('''
-                        INSERT INTO petty_cash (entry_date, description, cash_in, cash_out, category, approved_by)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (
-                        str(row.get('entry_date', date.today())),
-                        str(row.get('description', '')),
-                        float(row.get('cash_in', 0.0)),
-                        float(row.get('cash_out', 0.0)),
-                        str(row.get('category', 'General')),
-                        str(row.get('approved_by', 'Management'))
-                    ))
-                conn.commit()
-                st.success("Petty Cash uploaded!")
-            except Exception as e:
-                st.error(f"Error processing Petty Cash file: {e}")
-
-    with st.expander("New Petty Cash Transaction", expanded=False):
-        with st.form("pc_form"):
-            c1, c2, c3 = st.columns(3)
-            p_date = c1.date_input("Date", date.today())
-            p_type = c2.selectbox("Transaction Type", ["Cash Out (Expense)", "Cash In (Replenishment)"])
-            p_amount = c3.number_input("Amount (AED)", min_value=0.0, step=10.0)
+    with st.expander("Record Petty Cash Transaction", expanded=True):
+        with st.form("petty_form"):
+            pc1, pc2, pc3 = st.columns(3)
+            e_date = pc1.date_input("Entry Date", date.today())
+            cat = pc2.selectbox("Category", ["Replenishment", "Office Overhead", "Site Transport/Fuel", "Client Hospitality", "Emergency Site Materials"])
+            app_by = pc3.text_input("Approved By", "Prashanth")
             
-            c4, c5 = st.columns(2)
-            p_cat = c4.selectbox("Expense Category", ["Site Fuel", "Materials", "Worker Mess/Food", "Office Overhead", "Replenishment", "Other"])
-            p_app = c5.text_input("Approved By", "Prashanth")
+            desc = st.text_input("Description / Particulars")
             
-            p_desc = st.text_input("Expense Description")
+            pc4, pc5 = st.columns(2)
+            c_in = pc4.number_input("Cash IN (Replenishment) [AED]", min_value=0.0, step=100.0)
+            c_out = pc5.number_input("Cash OUT (Expense) [AED]", min_value=0.0, step=50.0)
             
-            cash_in = p_amount if p_type == "Cash In (Replenishment)" else 0.0
-            cash_out = p_amount if p_type == "Cash Out (Expense)" else 0.0
-            
-            if st.form_submit_button("Submit Petty Cash Entry"):
+            if st.form_submit_button("Record Entry"):
                 conn.execute('''
                     INSERT INTO petty_cash (entry_date, description, cash_in, cash_out, category, approved_by)
                     VALUES (?, ?, ?, ?, ?, ?)
-                ''', (str(p_date), p_desc, cash_in, cash_out, p_cat, p_app))
+                ''', (str(e_date), desc, c_in, c_out, cat, app_by))
                 
+                if c_out > 0:
+                    cat_pnl = classify_pnl_category(f"{cat} - {desc}", is_income=False)
+                    conn.execute('''
+                        INSERT INTO financials (trans_date, particulars, payment_mode, is_petty_cash, expense_amount, expense_net, pnl_category)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (str(e_date), f"Petty Cash: {desc}", "Cash", "YES", c_out, c_out, cat_pnl))
+                    
                 conn.commit()
-                st.success("Petty Cash recorded!")
+                st.success("Petty Cash transaction recorded and integrated into P&L!")
                 st.rerun()
 
-    df_pc = pd.read_sql("SELECT * FROM petty_cash", conn)
-    
+    df_petty = pd.read_sql("SELECT * FROM petty_cash", conn)
     st.markdown("---")
-    if not df_pc.empty:
-        total_in = df_pc['cash_in'].sum()
-        total_out = df_pc['cash_out'].sum()
-        balance = total_in - total_out
+    
+    if not df_petty.empty:
+        tot_in = df_petty['cash_in'].sum()
+        tot_out = df_petty['cash_out'].sum()
+        bal = tot_in - tot_out
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Replenished (In)", f"AED {total_in:,.2f}")
-        c2.metric("Total Disbursed (Out)", f"AED {total_out:,.2f}")
-        c3.metric("Current Petty Cash Balance", f"AED {balance:,.2f}")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Replenishments (In)", f"AED {tot_in:,.2f}")
+        m2.metric("Total Disbursements (Out)", f"AED {tot_out:,.2f}")
+        m3.metric("Current Petty Cash Balance", f"AED {bal:,.2f}")
         
-        st.subheader("Petty Cash Transaction Ledger")
-        st.dataframe(df_pc, use_container_width=True)
-        
-        cp1, cp2 = st.columns(2)
-        cp1.download_button("Export Petty Cash to Excel", data=to_excel(df_pc), file_name="Petty_Cash_Report.xlsx")
-        
-        if cp2.button("Clear Petty Cash Data", type="primary"):
-            conn.execute("DELETE FROM petty_cash")
-            conn.commit()
-            st.rerun()
+        st.subheader("Transaction History")
+        st.dataframe(df_petty, use_container_width=True)
+        st.download_button("Export Petty Cash Ledger", data=to_excel(df_petty), file_name="Petty_Cash_Ledger.xlsx")
     else:
-        st.info("No petty cash logs available.")
+        st.info("No petty cash transactions recorded.")
     conn.close()
 
 # --- 8. CLIENT RECEIPTS & PROJECTS ---
 elif menu == "Client Receipts & Projects":
-    st.title("Client Receipts & Invoicing Tracker")
+    st.title("Client Invoicing & Payment Receipts")
     
     conn = get_db_connection()
     
-    with st.expander("Record Client Payment / Invoice", expanded=False):
-        with st.form("client_form"):
-            c1, c2, c3 = st.columns(3)
-            client = c1.text_input("Client Name")
-            project = c2.text_input("Project Name")
-            inv_no = c3.text_input("Invoice Number")
+    with st.expander("Record Client Invoice / Receipt", expanded=True):
+        with st.form("client_pay_form"):
+            cc1, cc2, cc3 = st.columns(3)
+            c_name = cc1.text_input("Client Name")
+            p_name = cc2.text_input("Project Name")
+            inv_no = cc3.text_input("Invoice Number")
             
-            c4, c5, c6 = st.columns(3)
-            inv_date = c4.date_input("Invoice Date", date.today())
-            inv_amt = c5.number_input("Invoice Amount (AED)", min_value=0.0)
-            rcvd_amt = c6.number_input("Received Amount (AED)", min_value=0.0)
+            cc4, cc5, cc6 = st.columns(3)
+            inv_date = cc4.date_input("Invoice Date", date.today())
+            inv_amt = cc5.number_input("Invoice Net Amount (AED)", min_value=0.0, step=1000.0)
+            rec_amt = cc6.number_input("Received Amount (AED)", min_value=0.0, step=1000.0)
             
-            status = "Paid" if rcvd_amt >= inv_amt else "Partially Paid"
+            status = st.selectbox("Status", ["Fully Paid", "Partially Paid", "Pending"])
             
             if st.form_submit_button("Save Client Payment"):
                 conn.execute('''
                     INSERT INTO client_payments (client_name, project_name, invoice_no, invoice_date, amount, received_amount, status)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (client, project, inv_no, str(inv_date), inv_amt, rcvd_amt, status))
+                ''', (c_name, p_name, inv_no, str(inv_date), inv_amt, rec_amt, status))
                 
+                if rec_amt > 0:
+                    conn.execute('''
+                        INSERT INTO financials (trans_date, bill_no, particulars, payment_mode, income_amount, income_net, pnl_category)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (str(inv_date), inv_no, f"Client Payment - {c_name} ({p_name})", "Bank Transfer", rec_amt, rec_amt, "Revenue"))
+                    
                 conn.commit()
-                st.success("Client payment recorded!")
+                st.success("Client payment logged and synchronized with Revenue!")
                 st.rerun()
 
-    df_cli = pd.read_sql("SELECT * FROM client_payments", conn)
-    
+    df_cp = pd.read_sql("SELECT * FROM client_payments", conn)
     st.markdown("---")
-    if not df_cli.empty:
-        df_cli['Outstanding'] = df_cli['amount'] - df_cli['received_amount']
-        
-        st.subheader("Client Collections Summary")
-        st.dataframe(df_cli, use_container_width=True)
-        
-        cc1, cc2 = st.columns(2)
-        cc1.download_button("Export Client Receipts", data=to_excel(df_cli), file_name="Client_Receipts.xlsx")
-        
-        if cc2.button("Clear Client Ledger", type="primary"):
-            conn.execute("DELETE FROM client_payments")
-            conn.commit()
-            st.rerun()
+    st.subheader("Client Collections Summary")
+    if not df_cp.empty:
+        df_cp['Outstanding Balance'] = df_cp['amount'] - df_cp['received_amount']
+        st.dataframe(df_cp, use_container_width=True)
+        st.download_button("Export Client Accounts", data=to_excel(df_cp), file_name="Client_Payments.xlsx")
     else:
-        st.info("No client payment entries recorded.")
+        st.info("No client invoices/payments recorded.")
     conn.close()
 
 # --- 9. VENDOR PAYMENTS & AGING ---
 elif menu == "Vendor Payments & Aging":
-    st.title("Vendor Payment Tracker & Aging Analysis")
+    st.title("Vendor Accounts Payable & Aging Tracker")
     
     conn = get_db_connection()
     
-    with st.expander("Record Vendor Invoice / Bill", expanded=False):
+    with st.expander("Register Vendor Bill / Payment", expanded=True):
         with st.form("vendor_form"):
-            v1, v2, v3 = st.columns(3)
-            vendor = v1.text_input("Vendor Name")
-            inv_no = v2.text_input("Vendor Invoice #")
-            inv_amt = v3.number_input("Invoice Amount (AED)", min_value=0.0)
+            vc1, vc2, vc3 = st.columns(3)
+            v_name = vc1.text_input("Vendor / Subcontractor Name")
+            inv_no = vc2.text_input("Vendor Invoice No")
+            v_status = vc3.selectbox("Status", ["Unpaid", "Partially Paid", "Settled"])
             
-            v4, v5, v6 = st.columns(3)
-            inv_date = v4.date_input("Invoice Date", date.today())
-            due_date = v5.date_input("Due Date", date.today() + datetime.timedelta(days=30))
-            paid_amt = v6.number_input("Paid Amount (AED)", min_value=0.0)
+            vc4, vc5, vc6 = st.columns(3)
+            inv_date = vc4.date_input("Invoice Date", date.today())
+            due_date = vc5.date_input("Due Date", date.today() + datetime.timedelta(days=30))
+            amt = vc6.number_input("Invoice Total (AED)", min_value=0.0, step=500.0)
             
-            status = "Paid" if paid_amt >= inv_amt else "Pending"
+            paid_amt = st.number_input("Amount Paid So Far (AED)", min_value=0.0, step=500.0)
             
             if st.form_submit_button("Save Vendor Bill"):
                 conn.execute('''
                     INSERT INTO vendor_payments (vendor_name, invoice_no, invoice_date, due_date, amount, paid_amount, status)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (vendor, inv_no, str(inv_date), str(due_date), inv_amt, paid_amt, status))
+                ''', (v_name, inv_no, str(inv_date), str(due_date), amt, paid_amt, v_status))
                 
+                if paid_amt > 0:
+                    conn.execute('''
+                        INSERT INTO financials (trans_date, bill_no, particulars, payment_mode, expense_amount, expense_net, pnl_category)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (str(inv_date), inv_no, f"Vendor Payment - {v_name}", "Bank Transfer", paid_amt, paid_amt, "Subcontractors, Materials & Site Execution"))
+                    
                 conn.commit()
-                st.success("Vendor bill recorded!")
+                st.success("Vendor payment tracked successfully!")
                 st.rerun()
 
-    df_ven = pd.read_sql("SELECT * FROM vendor_payments", conn)
-    
+    df_vp = pd.read_sql("SELECT * FROM vendor_payments", conn)
     st.markdown("---")
-    if not df_ven.empty:
-        today_date = pd.to_datetime(date.today())
-        df_ven['due_date_dt'] = pd.to_datetime(df_ven['due_date'], errors='coerce')
-        df_ven['Days Overdue'] = (today_date - df_ven['due_date_dt']).dt.days
-        df_ven['Outstanding'] = df_ven['amount'] - df_ven['paid_amount']
-        
-        def assign_aging(days):
-            if days <= 0:
-                return "Current / Not Due"
-            elif days <= 30:
-                return "1 - 30 Days"
-            elif days <= 60:
-                return "31 - 60 Days"
-            elif days <= 90:
-                return "61 - 90 Days"
-            else:
-                return "90+ Days Overdue"
-                
-        df_ven['Aging Bucket'] = df_ven['Days Overdue'].apply(assign_aging)
-        
-        st.subheader("Vendor Outstanding & Aging Breakdown")
-        aging_pivot = df_ven.groupby('Aging Bucket')['Outstanding'].sum().reset_index()
-        st.dataframe(aging_pivot, use_container_width=True)
-        
-        st.subheader("Detailed Vendor Ledger")
-        st.dataframe(df_ven.drop(columns=['due_date_dt']), use_container_width=True)
-        
-        cv1, cv2 = st.columns(2)
-        cv1.download_button("Export Vendor Aging Report", data=to_excel(df_ven), file_name="Vendor_Aging_Report.xlsx")
-        
-        if cv2.button("Clear Vendor Data", type="primary"):
-            conn.execute("DELETE FROM vendor_payments")
-            conn.commit()
-            st.rerun()
+    st.subheader("Vendor Payable Ledger")
+    if not df_vp.empty:
+        df_vp['Balance Due'] = df_vp['amount'] - df_vp['paid_amount']
+        st.dataframe(df_vp, use_container_width=True)
+        st.download_button("Export Vendor Accounts", data=to_excel(df_vp), file_name="Vendor_Payables.xlsx")
     else:
-        st.info("No vendor invoices logged.")
+        st.info("No vendor bills recorded.")
     conn.close()
 
 # --- 10. DATA BACKUP & TEMPLATES ---
 elif menu == "Data Backup & Templates":
-    st.title("Data Backup & Maintenance")
-    st.write("Download complete copies of your stored database tables below:")
+    st.title("System Maintenance, Database Backup & Exports")
     
-    conn = get_db_connection()
+    st.markdown("""
+    ### System Utilities
+    Use this portal to extract database snapshots, review database health, or clear database state safely.
+    """)
     
-    tables = ["financials", "projects", "quotations", "salaries", "petty_cash", "vendor_payments", "client_payments"]
-    for tbl in tables:
-        df_t = pd.read_sql(f"SELECT * FROM {tbl}", conn)
-        st.download_button(
-            f"Export `{tbl.upper()}` Table",
-            data=to_excel(df_t),
-            file_name=f"Backup_{tbl}.xlsx",
-            key=f"btn_{tbl}"
-        )
-    conn.close()
+    st.markdown("---")
+    st.subheader("Database Backup")
+    
+    try:
+        with open(DB_FILE, "rb") as f:
+            db_bytes = f.read()
+        st.download_button("Download Full SQLite Database File (.db)", data=db_bytes, file_name=f"ain_renov_backup_{date.today()}.db")
+    except Exception as e:
+        st.error(f"Unable to read database file for backup: {e}")
+        
+    st.markdown("---")
+    st.subheader("System Reset Options")
+    st.warning("⚠️ Action Zone: These actions permanently alter system records.")
+    
+    if st.button("Purge Database Records", type="primary"):
+        conn = get_db_connection()
+        conn.execute("DELETE FROM financials")
+        conn.execute("DELETE FROM quotations")
+        conn.execute("DELETE FROM salaries")
+        conn.execute("DELETE FROM petty_cash")
+        conn.execute("DELETE FROM vendor_payments")
+        conn.execute("DELETE FROM client_payments")
+        conn.execute("DELETE FROM projects")
+        conn.commit()
+        conn.close()
+        st.success("All table data wiped successfully!")
+        st.rerun()
