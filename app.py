@@ -12,21 +12,27 @@ st.set_page_config(
 
 DB_FILE = "financials.db"
 
-# --- DATABASE INITIALIZATION & MIGRATION ---
+# --- DATABASE INITIALIZATION & AUTO-MIGRATION ---
 def get_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
 def migrate_db(conn):
-    """Checks and automatically adds missing columns to existing SQLite tables."""
+    """Dynamically patches existing SQLite tables with any missing columns."""
     cursor = conn.cursor()
     cursor.execute("PRAGMA table_info(transactions)")
     columns = [column[1] for column in cursor.fetchall()]
     
-    if "is_cash" not in columns:
-        cursor.execute("ALTER TABLE transactions ADD COLUMN is_cash TEXT")
-    if "is_petty_cash" not in columns:
-        cursor.execute("ALTER TABLE transactions ADD COLUMN is_petty_cash TEXT")
-        
+    needed_columns = {
+        "is_cash": "TEXT",
+        "is_petty_cash": "TEXT",
+        "category": "TEXT",
+        "transaction_type": "TEXT"
+    }
+    
+    for col_name, col_type in needed_columns.items():
+        if col_name not in columns:
+            cursor.execute(f"ALTER TABLE transactions ADD COLUMN {col_name} {col_type}")
+            
     conn.commit()
 
 def init_db():
@@ -57,7 +63,6 @@ def init_db():
         )
     """)
     
-    # Run migration check for missing columns on existing tables
     migrate_db(conn)
     
     # 2. Quotation Tracker Table
@@ -126,7 +131,7 @@ def init_db():
 
 init_db()
 
-# --- CATEGORY DEFINITIONS & AI RULE ENGINE ---
+# --- CATEGORIES & AI AUTO-SORT ENGINE ---
 CATEGORIES = [
     "Admin",
     "Licensing",
@@ -190,7 +195,7 @@ def get_vat_quarter(date_obj):
         return f"{adj_year} Q4 (Dec-Feb)"
     return "Unknown"
 
-# --- DATABASE HELPERS ---
+# --- HELPER FUNCTIONS ---
 def load_table(table_name):
     conn = get_connection()
     df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
@@ -214,7 +219,7 @@ def delete_single_row(table_name, row_id):
     conn.commit()
     conn.close()
 
-# --- SIDEBAR & FILE UPLOAD HANDLER ---
+# --- SIDEBAR UPLOAD CONTROL ---
 st.sidebar.title("📁 Ain Renov ERP")
 st.sidebar.markdown("---")
 
@@ -331,9 +336,9 @@ if uploaded_file is not None:
         finally:
             conn.close()
 
-# --- MAIN TABBED NAVIGATION ---
+# --- APP TABS ---
 tabs = st.tabs([
-    "📊 Financials & P&L",
+    "📊 Financials & YoY P&L",
     "🏛️ Corporate Tax & VAT",
     "📋 Quotation Tracker",
     "👥 Staff Salaries",
@@ -343,14 +348,15 @@ tabs = st.tabs([
 ])
 
 # -----------------------------------------------------------------------------
-# TAB 1: FINANCIALS & P&L
+# TAB 1: FINANCIALS & YOY P&L
 # -----------------------------------------------------------------------------
 with tabs[0]:
-    st.header("Financial Overview & AI Categorization Breakdown")
+    st.header("Financial Overview & Year-over-Year (YoY) P&L Analysis")
     df_tx = load_table("transactions")
     
     if not df_tx.empty:
         df_tx['date_dt'] = pd.to_datetime(df_tx['date'], errors='coerce')
+        df_tx['year'] = df_tx['date_dt'].dt.year
         
         col1, col2, col3, col4 = st.columns(4)
         inc_tot = df_tx['income_net'].sum()
@@ -358,14 +364,28 @@ with tabs[0]:
         col1.metric("Total Income (AED)", f"{inc_tot:,.2f}")
         col2.metric("Total Expenses (AED)", f"{exp_tot:,.2f}")
         col3.metric("Net Profit (AED)", f"{inc_tot - exp_tot:,.2f}")
-        col4.metric("Total Entries", len(df_tx))
+        col4.metric("Total Records", len(df_tx))
 
         st.markdown("---")
+        st.subheader("Year-over-Year (YoY) Profit & Loss Summary")
+        
+        yoy_df = df_tx.groupby('year').agg(
+            Total_Income=('income_net', 'sum'),
+            Total_Expense=('expense_net', 'sum')
+        ).reset_index()
+        yoy_df['Net_Profit'] = yoy_df['Total_Income'] - yoy_df['Total_Expense']
+        yoy_df['YoY_Growth_%'] = yoy_df['Net_Profit'].pct_change() * 100
+        st.dataframe(yoy_df.style.format({
+            'Total_Income': '{:,.2f}',
+            'Total_Expense': '{:,.2f}',
+            'Net_Profit': '{:,.2f}',
+            'YoY_Growth_%': '{:+.2f}%'
+        }), use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Filtered Financial Ledger")
         selected_cat = st.selectbox("Filter by AI-Sorted Category", ["All Categories"] + CATEGORIES)
-        if selected_cat != "All Categories":
-            df_disp = df_tx[df_tx['category'] == selected_cat]
-        else:
-            df_disp = df_tx
+        df_disp = df_tx if selected_cat == "All Categories" else df_tx[df_tx['category'] == selected_cat]
             
         st.dataframe(
             df_disp[['id', 'sl_no', 'date', 'invoice_number', 'particulars', 'payment_mode', 'is_petty_cash', 'is_cash', 'category', 'income_net', 'expense_net']],
@@ -380,7 +400,7 @@ with tabs[0]:
             st.success(f"Transaction ID {tx_del_id} deleted successfully!")
             st.rerun()
     else:
-        st.info("No financial data found in database. Upload the Financials Template from the sidebar.")
+        st.info("No financial records found in database. Upload the Financials Template from the sidebar.")
 
 # -----------------------------------------------------------------------------
 # TAB 2: CORPORATE TAX & VAT
