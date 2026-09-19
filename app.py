@@ -2,12 +2,13 @@ import io
 import re
 import datetime
 import sqlite3
+import hashlib
 import pandas as pd
 import streamlit as st
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Ain Renov ERP - Web Financial & Operations",
+    page_title="Ain Renov ERP - Web Financials & Access Control",
     page_icon="🏢",
     layout="wide"
 )
@@ -18,10 +19,25 @@ DB_FILE = "app_database.db"
 def get_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
+def hash_password(password):
+    return hashlib.sha256(str(password).encode()).hexdigest()
+
 def init_db():
     conn = get_connection()
     c = conn.cursor()
     
+    # Users & Authentication Table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
+            password_hash TEXT,
+            full_name TEXT,
+            role TEXT,
+            status TEXT
+        )
+    ''')
+
     # Financials Ledger
     c.execute('''
         CREATE TABLE IF NOT EXISTS financials (
@@ -129,6 +145,14 @@ def init_db():
             status TEXT
         )
     ''')
+
+    # Seed Default Admin Account if missing
+    c.execute("SELECT * FROM users WHERE username = 'admin'")
+    if not c.fetchone():
+        c.execute('''
+            INSERT INTO users (username, password_hash, full_name, role, status)
+            VALUES (?, ?, ?, ?, ?)
+        ''', ('admin', hash_password('admin123'), 'General Manager', 'ADMIN', 'ACTIVE'))
     
     conn.commit()
     conn.close()
@@ -183,6 +207,65 @@ def convert_df_to_excel(df):
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Data')
     return buffer.getvalue()
+
+# --- AUTHENTICATION MODULE ---
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+def login_user(username, password):
+    conn = get_connection()
+    c = conn.cursor()
+    p_hash = hash_password(password)
+    c.execute("SELECT username, full_name, role, status FROM users WHERE username = ? AND password_hash = ?", (username, p_hash))
+    user_rec = c.fetchone()
+    conn.close()
+    return user_rec
+
+if st.session_state.user is None:
+    st.title("🔒 Ain Renov ERP - Secure Web Sign In")
+    tab_log, tab_sign = st.tabs(["🔑 Sign In", "📝 Request New User Account"])
+    
+    with tab_log:
+        st.subheader("Login to Your Account")
+        l_user = st.text_input("Username", key="l_user")
+        l_pass = st.text_input("Password", type="password", key="l_pass")
+        if st.button("Sign In"):
+            u_data = login_user(l_user, l_pass)
+            if u_data:
+                uname, fname, role, status = u_data
+                if status == "ACTIVE":
+                    st.session_state.user = {"username": uname, "full_name": fname, "role": role}
+                    st.success(f"Welcome back, {fname}!")
+                    st.rerun()
+                elif status == "PENDING":
+                    st.warning("Your account request is PENDING approval from the Admin.")
+                else:
+                    st.error("Account access disabled.")
+            else:
+                st.error("Invalid username or password.")
+                
+    with tab_sign:
+        st.subheader("Register New User Account")
+        r_user = st.text_input("Choose Username", key="r_user").strip().lower()
+        r_fname = st.text_input("Full Name", key="r_fname")
+        r_pass = st.text_input("Choose Password", type="password", key="r_pass")
+        if st.button("Submit Registration Request"):
+            if r_user and r_pass:
+                try:
+                    conn = get_connection()
+                    c = conn.cursor()
+                    c.execute('''
+                        INSERT INTO users (username, password_hash, full_name, role, status)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (r_user, hash_password(r_pass), r_fname, 'USER', 'PENDING'))
+                    conn.commit()
+                    conn.close()
+                    st.success("Account request submitted! Please notify the Admin to authorize your access.")
+                except sqlite3.IntegrityError:
+                    st.error("Username already taken. Please choose another.")
+            else:
+                st.error("Please fill in all registration fields.")
+    st.stop()
 
 # --- TEMPLATE GENERATORS ---
 def generate_financial_template():
@@ -259,26 +342,31 @@ def generate_vendor_template():
     }])
     return convert_df_to_excel(df_temp)
 
-# --- SIDEBAR NAVIGATION ---
+# --- SIDEBAR NAVIGATION & USER INFO ---
 st.sidebar.title("Ain Renov ERP")
-st.sidebar.subheader("Dubai, UAE (Web ERP)")
+st.sidebar.markdown(f"**Logged In:** {st.session_state.user['full_name']} ({st.session_state.user['role']})")
+if st.sidebar.button("🚪 Logout"):
+    st.session_state.user = None
+    st.rerun()
 
-nav = st.sidebar.radio(
-    "Navigation Menu",
-    [
-        "Overview & Dashboard",
-        "Data Import, Export & Clear",
-        "P&L (YoY Analysis)",
-        "VAT & Corporate Tax Returns",
-        "Petty Cash Ledger",
-        "Project-Wise Analysis",
-        "Client Payments Tracker",
-        "Vendor Payments & Ageing",
-        "Quotation Tracker",
-        "Staff Salaries Tracker",
-        "Document Generator"
-    ]
-)
+menu_options = [
+    "Overview & Dashboard",
+    "Data Import, Export & Clear",
+    "P&L (YoY Analysis)",
+    "VAT & Corporate Tax Returns",
+    "Petty Cash Ledger",
+    "Project-Wise Analysis",
+    "Client Payments Tracker",
+    "Vendor Payments & Ageing",
+    "Quotation Tracker",
+    "Staff Salaries Tracker",
+    "Document Generator"
+]
+
+if st.session_state.user["role"] == "ADMIN":
+    menu_options.append("User Management & Access Control")
+
+nav = st.sidebar.radio("Navigation Menu", menu_options)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📥 Web Data Uploaders")
@@ -320,7 +408,6 @@ if up_fin and st.sidebar.button("Process & Save Financial File"):
             ''', (sl_val, yes_no_val, d_val, pay_date, bill_no, part_txt, pmode, is_petty,
                   inc_amt, inc_vat, inc_net, exp_amt, exp_vat, exp_net))
             
-            # Auto-populate Petty Cash table if flagged
             if is_petty == "YES" or "CASH" in pmode.upper():
                 c.execute('''
                     INSERT INTO petty_cash (sl_no, date, voucher_no, description, cash_in, cash_out, balance, remarks)
@@ -329,7 +416,7 @@ if up_fin and st.sidebar.button("Process & Save Financial File"):
 
         conn.commit()
         conn.close()
-        st.sidebar.success("Financial file saved permanently to cloud/server DB!")
+        st.sidebar.success("Financial file saved permanently to database!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing financial file: {e}")
@@ -423,8 +510,38 @@ if up_v and st.sidebar.button("Process & Save Vendor File"):
     except Exception as e:
         st.sidebar.error(f"Error processing vendor file: {e}")
 
+# --- MODULE: USER MANAGEMENT & ACCESS CONTROL ---
+if nav == "User Management & Access Control":
+    st.title("👥 User Authorisation & Access Control")
+    df_u = load_db_table("users")
+    
+    st.subheader("Pending Member Registration Requests")
+    df_p = df_u[df_u["status"] == "PENDING"]
+    if not df_p.empty:
+        for idx, r in df_p.iterrows():
+            with st.expander(f"User: {r['username']} ({r['full_name']})"):
+                c_a, c_b = st.columns(2)
+                if c_a.button(f"Approve {r['username']}", key=f"app_{r['id']}"):
+                    conn = get_connection()
+                    c = conn.cursor()
+                    c.execute("UPDATE users SET status = 'ACTIVE' WHERE id = ?", (r['id'],))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"User {r['username']} authorized!")
+                    st.rerun()
+                if c_b.button(f"Reject {r['username']}", key=f"rej_{r['id']}"):
+                    delete_db_row("users", r['id'])
+                    st.success(f"User {r['username']} rejected.")
+                    st.rerun()
+    else:
+        st.info("No pending authorization requests.")
+        
+    st.markdown("---")
+    st.subheader("All Registered System Users")
+    st.dataframe(df_u[["id", "username", "full_name", "role", "status"]], use_container_width=True)
+
 # --- MODULE 1: OVERVIEW & DASHBOARD ---
-if nav == "Overview & Dashboard":
+elif nav == "Overview & Dashboard":
     st.title("🌐 Financial Summary & Operations Dashboard")
     
     df_fin = load_db_table("financials")
