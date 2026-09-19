@@ -7,12 +7,12 @@ import streamlit as st
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Ain Renov ERP - Financials & Operations",
+    page_title="Ain Renov ERP - Web Financial & Operations",
     page_icon="🏢",
     layout="wide"
 )
 
-# --- DATABASE PERSISTENCE SETUP (SQLite Disk Storage) ---
+# --- DATABASE PERSISTENCE SETUP ---
 DB_FILE = "app_database.db"
 
 def get_connection():
@@ -22,7 +22,7 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
     
-    # Financials Ledger Table
+    # Financials Ledger
     c.execute('''
         CREATE TABLE IF NOT EXISTS financials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,7 +99,7 @@ def init_db():
         )
     ''')
 
-    # Client Payments Tracker Table
+    # Client Payments Tracker
     c.execute('''
         CREATE TABLE IF NOT EXISTS client_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +115,7 @@ def init_db():
         )
     ''')
 
-    # Vendor Payments & Ageing Table
+    # Vendor Payments Tracker & Ageing
     c.execute('''
         CREATE TABLE IF NOT EXISTS vendor_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,7 +261,7 @@ def generate_vendor_template():
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("Ain Renov ERP")
-st.sidebar.subheader("Dubai, UAE")
+st.sidebar.subheader("Dubai, UAE (Web ERP)")
 
 nav = st.sidebar.radio(
     "Navigation Menu",
@@ -281,7 +281,7 @@ nav = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📥 Data Uploader")
+st.sidebar.subheader("📥 Web Data Uploaders")
 
 # 1. Financial Ledger Upload
 up_fin = st.sidebar.file_uploader("Upload Financial Ledger (.xlsx)", type=["xlsx"])
@@ -329,7 +329,7 @@ if up_fin and st.sidebar.button("Process & Save Financial File"):
 
         conn.commit()
         conn.close()
-        st.sidebar.success("Financial file saved to persistent database!")
+        st.sidebar.success("Financial file saved permanently to cloud/server DB!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing financial file: {e}")
@@ -425,7 +425,7 @@ if up_v and st.sidebar.button("Process & Save Vendor File"):
 
 # --- MODULE 1: OVERVIEW & DASHBOARD ---
 if nav == "Overview & Dashboard":
-    st.title("📊 Financial Summary & Operations Dashboard")
+    st.title("🌐 Financial Summary & Operations Dashboard")
     
     df_fin = load_db_table("financials")
     df_p = load_db_table("projects")
