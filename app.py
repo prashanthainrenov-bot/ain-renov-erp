@@ -44,11 +44,11 @@ def init_db():
             expense_vat REAL DEFAULT 0.0,
             expense_net REAL DEFAULT 0.0,
             amount REAL DEFAULT 0.0,
-            pnl_category TEXT DEFAULT 'General'
+            pnl_category TEXT DEFAULT 'Subcontractors, Materials & Site Execution'
         )
     ''')
     
-    # Self-healing schema migration: Ensure all required columns exist
+    # Self-healing schema migration: Ensure all required columns exist dynamically
     c.execute("PRAGMA table_info(financials)")
     existing_cols = [row[1] for row in c.fetchall()]
     
@@ -68,7 +68,7 @@ def init_db():
         "expense_vat": "REAL DEFAULT 0.0",
         "expense_net": "REAL DEFAULT 0.0",
         "amount": "REAL DEFAULT 0.0",
-        "pnl_category": "TEXT DEFAULT 'General'"
+        "pnl_category": "TEXT DEFAULT 'Subcontractors, Materials & Site Execution'"
     }
     
     for col_name, col_type in required_cols.items():
@@ -79,14 +79,14 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS quotations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_name TEXT,
-            project_name TEXT,
-            quotation_date TEXT,
-            expected_closure_date TEXT,
-            amount REAL,
-            status TEXT,
-            reminder_date TEXT,
-            feedback TEXT
+            client_name TEXT DEFAULT '',
+            project_name TEXT DEFAULT '',
+            quotation_date TEXT DEFAULT '',
+            expected_closure_date TEXT DEFAULT '',
+            amount REAL DEFAULT 0.0,
+            status TEXT DEFAULT 'In Process',
+            reminder_date TEXT DEFAULT '',
+            feedback TEXT DEFAULT ''
         )
     ''')
     
@@ -94,14 +94,14 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS salaries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            employee_name TEXT,
-            salary_month TEXT,
-            basic_salary REAL,
-            allowances REAL,
-            deductions REAL,
-            paid_amount REAL,
-            outstanding_amount REAL,
-            payment_date TEXT
+            employee_name TEXT DEFAULT '',
+            salary_month TEXT DEFAULT '',
+            basic_salary REAL DEFAULT 0.0,
+            allowances REAL DEFAULT 0.0,
+            deductions REAL DEFAULT 0.0,
+            paid_amount REAL DEFAULT 0.0,
+            outstanding_amount REAL DEFAULT 0.0,
+            payment_date TEXT DEFAULT ''
         )
     ''')
     
@@ -109,12 +109,12 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS petty_cash (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entry_date TEXT,
-            description TEXT,
-            cash_in REAL,
-            cash_out REAL,
-            category TEXT,
-            approved_by TEXT
+            entry_date TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            cash_in REAL DEFAULT 0.0,
+            cash_out REAL DEFAULT 0.0,
+            category TEXT DEFAULT '',
+            approved_by TEXT DEFAULT ''
         )
     ''')
     
@@ -122,13 +122,13 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS vendor_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            vendor_name TEXT,
-            invoice_no TEXT,
-            invoice_date TEXT,
-            due_date TEXT,
-            amount REAL,
-            paid_amount REAL,
-            status TEXT
+            vendor_name TEXT DEFAULT '',
+            invoice_no TEXT DEFAULT '',
+            invoice_date TEXT DEFAULT '',
+            due_date TEXT DEFAULT '',
+            amount REAL DEFAULT 0.0,
+            paid_amount REAL DEFAULT 0.0,
+            status TEXT DEFAULT 'Unpaid'
         )
     ''')
     
@@ -136,13 +136,13 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS client_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_name TEXT,
-            project_name TEXT,
-            invoice_no TEXT,
-            invoice_date TEXT,
-            amount REAL,
-            received_amount REAL,
-            status TEXT
+            client_name TEXT DEFAULT '',
+            project_name TEXT DEFAULT '',
+            invoice_no TEXT DEFAULT '',
+            invoice_date TEXT DEFAULT '',
+            amount REAL DEFAULT 0.0,
+            received_amount REAL DEFAULT 0.0,
+            status TEXT DEFAULT 'Pending'
         )
     ''')
 
@@ -150,13 +150,13 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_name TEXT,
-            client_name TEXT,
-            contract_value REAL,
-            start_date TEXT,
-            expected_completion TEXT,
-            status TEXT,
-            notes TEXT
+            project_name TEXT DEFAULT '',
+            client_name TEXT DEFAULT '',
+            contract_value REAL DEFAULT 0.0,
+            start_date TEXT DEFAULT '',
+            expected_completion TEXT DEFAULT '',
+            status TEXT DEFAULT 'In Progress',
+            notes TEXT DEFAULT ''
         )
     ''')
     
@@ -165,34 +165,37 @@ def init_db():
 
 init_db()
 
-# --- RULE-BASED P&L HEAD CLASSIFIER ---
+# --- AI & RULE-BASED P&L CATEGORY CLASSIFIER ---
 def classify_pnl_category(particulars_str, is_income=False):
     txt = str(particulars_str).upper()
-    if is_income:
-        if "INVESTMENT" in txt or "CAPITAL" in txt:
-            return "CAPITAL"
-        elif "LOAN" in txt:
-            return "loan"
-        return "Revenue"
     
-    # Expense Classification
-    if any(k in txt for k in ["SALARY", "SALARIES", "WAGE", "COMMISSION", "PARTNER", "PRAMOTH", "PRASHANTH"]):
+    if is_income:
+        if any(k in txt for k in ["INVESTMENT", "CAPITAL", "SHAREHOLDER", "EQUITY"]):
+            return "CAPITAL"
+        elif any(k in txt for k in ["LOAN", "BORROWING", "FINANCING"]):
+            return "loan"
+        elif any(k in txt for k in ["INTEREST", "REFUND", "BANK"]):
+            return "Bank"
+        return "Subcontractors, Materials & Site Execution" # Default revenue / core business income category
+    
+    # Expense / Outflow Classification
+    if any(k in txt for k in ["SALARY", "SALARIES", "WAGE", "WAGES", "COMMISSION", "PARTNER", "BONUS", "PRAMOTH", "PRASHANTH", "EMPLOYEE", "PAYROLL"]):
         return "Salaries, Commissions & Partner Distributions"
-    elif any(k in txt for k in ["LICENSE", "TAX", "GOVT", "VISA", "MUNICIPALITY", "LEGAL", "AUDIT", "TYPING"]):
+    elif any(k in txt for k in ["LICENSE", "TAX", "GOVT", "VISA", "MUNICIPALITY", "LEGAL", "AUDIT", "TYPING", "PRO", "TRADE LICENSE", "VAT", "PENALTY", "CORPORATE TAX"]):
         return "Admin, Licensing, Tax & Banking"
-    elif any(k in txt for k in ["BANK CHARGES", "INTEREST", "BANK FEES", "CHQ"]):
+    elif any(k in txt for k in ["BANK CHARGES", "INTEREST", "BANK FEES", "CHQ", "CHEQUE", "TRANSFER FEE", "COMMISSION FEE"]):
         return "Bank"
-    elif any(k in txt for k in ["CAPITAL", "EQUITY"]):
+    elif any(k in txt for k in ["CAPITAL", "EQUITY", "INVESTMENT DRAW"]):
         return "CAPITAL"
-    elif any(k in txt for k in ["LOAN", "REPAYMENT", "EMI"]):
+    elif any(k in txt for k in ["LOAN", "REPAYMENT", "EMI", "BORROWING"]):
         return "loan"
-    elif any(k in txt for k in ["FUEL", "TRANSPORT", "VEHICLE", "SALIK", "CAR", "REPAIR", "VAN", "PARKING"]):
+    elif any(k in txt for k in ["FUEL", "TRANSPORT", "VEHICLE", "SALIK", "CAR", "REPAIR", "VAN", "PARKING", "PETROL", "DIESEL", "GARAGE", "RTA"]):
         return "Logistics, Vehicle & Transport"
-    elif any(k in txt for k in ["FOOD", "TEA", "REFRESHMENT", "HOSPITALITY", "PETTY CASH", "RESTURANT"]):
+    elif any(k in txt for k in ["FOOD", "TEA", "REFRESHMENT", "HOSPITALITY", "PETTY CASH", "RESTAURANT", "CAFETERIA", "ENTERTAINMENT", "OFFICE SUPPLY", "STATIONERY"]):
         return "Petty Cash & Client Hospitality"
-    elif any(k in txt for k in ["DEWA", "SEWA", "FEWA", "ETISALAT", "DU", "INTERNET", "MOBILE", "UTILITY", "PHONE"]):
+    elif any(k in txt for k in ["DEWA", "SEWA", "FEWA", "ETISALAT", "DU", "INTERNET", "MOBILE", "UTILITY", "PHONE", "WIFI", "TELECOM", "ELECTRICITY", "WATER"]):
         return "Utilities & Telecommunications"
-    elif any(k in txt for k in ["MATERIAL", "SUBCONTRACTOR", "ALUMINIUM", "STEEL", "GLASS", "HARDWARE", "EQUIPMENT", "SITE", "LABOUR"]):
+    elif any(k in txt for k in ["MATERIAL", "SUBCONTRACTOR", "ALUMINIUM", "STEEL", "GLASS", "HARDWARE", "EQUIPMENT", "SITE", "LABOUR", "CIVIL", "MEP", "PAINT", "TILES", "PLUMBING", "TOOL"]):
         return "Subcontractors, Materials & Site Execution"
     else:
         return "Subcontractors, Materials & Site Execution"
@@ -311,11 +314,11 @@ if menu == "Dashboard Overview":
     
     col1, col2, col3, col4 = st.columns(4)
     
-    inc_col = df_fin['income_net'] if 'income_net' in df_fin.columns else pd.Series([0.0])
-    exp_col = df_fin['expense_net'] if 'expense_net' in df_fin.columns else pd.Series([0.0])
+    inc_col = df_fin['income_net'] if ('income_net' in df_fin.columns and not df_fin.empty) else pd.Series([0.0])
+    exp_col = df_fin['expense_net'] if ('expense_net' in df_fin.columns and not df_fin.empty) else pd.Series([0.0])
     
-    tot_inc = inc_col.sum() if not df_fin.empty else 0.0
-    tot_exp = exp_col.sum() if not df_fin.empty else 0.0
+    tot_inc = inc_col.sum()
+    tot_exp = exp_col.sum()
     net_profit = tot_inc - tot_exp
     
     active_projects_count = len(df_proj[df_proj['status'] == 'In Progress']) if not df_proj.empty else 0
@@ -358,6 +361,7 @@ elif menu == "P&L & Financial Statements":
             try:
                 df_up = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
                 
+                # Column normalization
                 c_map = {str(col).strip().upper(): col for col in df_up.columns}
                 
                 for idx, row in df_up.iterrows():
@@ -371,7 +375,11 @@ elif menu == "P&L & Financial Statements":
                     p_date = str(p_date_val) if pd.notna(p_date_val) else ''
                     
                     bill_no = str(row.get(c_map.get('BILL/ INVOICE NUMBER', 'BILL/ INVOICE NUMBER'), ''))
-                    particulars = str(row.get(c_map.get('PARTICULARS', 'PARTICULARS'), ''))
+                    
+                    # Particulars extraction fix
+                    part_col = c_map.get('PARTICULARS', c_map.get('PARTICULAR', 'PARTICULARS'))
+                    particulars = str(row.get(part_col, '')) if part_col in row else str(row.get('PARTICULARS', ''))
+                    
                     pmode = str(row.get(c_map.get('PAYMENT MODE (CASH/BANK)', 'PAYMENT MODE (CASH/BANK)'), 'Bank Transfer'))
                     is_petty = str(row.get(c_map.get('IS PETTY CASH (YES/NO)', 'IS PETTY CASH (YES/NO)'), 'NO'))
                     
@@ -402,10 +410,10 @@ elif menu == "P&L & Financial Statements":
                         conn.execute('''
                             INSERT INTO petty_cash (entry_date, description, cash_in, cash_out, category, approved_by)
                             VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (t_date, particulars, inc_net, exp_net, pnl_cat, "Auto-Financial Upload"))
+                        ''', (t_date, particulars, inc_net, exp_net, pnl_cat, "Auto-Upload"))
                         
                 conn.commit()
-                st.success("Financial records successfully saved and categorized!")
+                st.success("Financial records successfully categorized and saved!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error processing file: {e}")
@@ -473,11 +481,12 @@ elif menu == "P&L & Financial Statements":
         col_d1, col_d2 = st.columns(2)
         col_d1.download_button("Export Ledger to Excel", data=to_excel(df_fin), file_name=f"Financial_Ledger_{selected_year}.xlsx")
         
-        if col_d2.button("Clear All Financial Data", type="primary"):
+        if col_d2.button("Delete / Clear All Financial Data", type="primary", key="del_fin_data"):
             c_conn = get_db_connection()
             c_conn.execute("DELETE FROM financials")
             c_conn.commit()
             c_conn.close()
+            st.success("Financial ledger purged successfully!")
             st.rerun()
     else:
         st.info("No financial data uploaded yet.")
@@ -498,9 +507,6 @@ elif menu == "VAT & Corporate Tax":
         
         if not df_fin.empty:
             df_fin['vat_quarter'] = df_fin['trans_date'].apply(get_vat_quarter)
-            
-            inc_vat_col = df_fin['income_vat'] if 'income_vat' in df_fin.columns else pd.Series([0.0])
-            exp_vat_col = df_fin['expense_vat'] if 'expense_vat' in df_fin.columns else pd.Series([0.0])
             
             vat_summary = df_fin.groupby('vat_quarter').agg({
                 'income_amount': 'sum',
@@ -567,6 +573,7 @@ elif menu == "Project Master & Analysis":
                     ))
                 conn.commit()
                 st.success("Projects batch uploaded successfully!")
+                st.rerun()
             except Exception as e:
                 st.error(f"Error uploading projects file: {e}")
 
@@ -630,9 +637,10 @@ elif menu == "Project Master & Analysis":
         cp1, cp2 = st.columns(2)
         cp1.download_button("Export Projects to Excel", data=to_excel(df_proj), file_name="Projects_Master.xlsx")
         
-        if cp2.button("Clear All Projects Data", type="primary"):
+        if cp2.button("Delete / Clear All Projects Data", type="primary", key="del_proj_data"):
             conn.execute("DELETE FROM projects")
             conn.commit()
+            st.success("Project records cleared successfully!")
             st.rerun()
     else:
         st.info("No projects registered.")
@@ -667,6 +675,7 @@ elif menu == "Quotation Tracker":
                     ))
                 conn.commit()
                 st.success("Quotations batch uploaded successfully!")
+                st.rerun()
             except Exception as e:
                 st.error(f"Error uploading quotations: {e}")
 
@@ -732,9 +741,10 @@ elif menu == "Quotation Tracker":
         c_q1, c_q2 = st.columns(2)
         c_q1.download_button("Export Quotations to Excel", data=to_excel(df_quotes), file_name="Quotations_List.xlsx")
         
-        if c_q2.button("Clear All Quotations", type="primary"):
+        if c_q2.button("Delete / Clear All Quotations Data", type="primary", key="del_quote_data"):
             conn.execute("DELETE FROM quotations")
             conn.commit()
+            st.success("Quotation records deleted successfully!")
             st.rerun()
     else:
         st.info("No quotations found.")
@@ -770,7 +780,6 @@ elif menu == "Staff Salary Tracker":
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (emp_name, sal_month, basic_sal, allowances, deductions, paid_amt, outstanding, str(p_date)))
                 
-                # Auto-sync to P&L financials table
                 if paid_amt > 0:
                     conn.execute('''
                         INSERT INTO financials (trans_date, particulars, payment_mode, expense_amount, expense_net, pnl_category)
@@ -786,7 +795,14 @@ elif menu == "Staff Salary Tracker":
     st.subheader("Payroll Ledger")
     if not df_sal.empty:
         st.dataframe(df_sal, use_container_width=True)
-        st.download_button("Export Payroll to Excel", data=to_excel(df_sal), file_name="Staff_Salaries.xlsx")
+        cs1, cs2 = st.columns(2)
+        cs1.download_button("Export Payroll to Excel", data=to_excel(df_sal), file_name="Staff_Salaries.xlsx")
+        
+        if cs2.button("Delete / Clear Salary Records", type="primary", key="del_sal_data"):
+            conn.execute("DELETE FROM salaries")
+            conn.commit()
+            st.success("Salary records deleted successfully!")
+            st.rerun()
     else:
         st.info("No payroll records found.")
     conn.close()
@@ -842,7 +858,15 @@ elif menu == "Petty Cash Management":
         
         st.subheader("Transaction History")
         st.dataframe(df_petty, use_container_width=True)
-        st.download_button("Export Petty Cash Ledger", data=to_excel(df_petty), file_name="Petty_Cash_Ledger.xlsx")
+        
+        cp_col1, cp_col2 = st.columns(2)
+        cp_col1.download_button("Export Petty Cash Ledger", data=to_excel(df_petty), file_name="Petty_Cash_Ledger.xlsx")
+        
+        if cp_col2.button("Delete / Clear Petty Cash Data", type="primary", key="del_petty_data"):
+            conn.execute("DELETE FROM petty_cash")
+            conn.commit()
+            st.success("Petty cash records cleared successfully!")
+            st.rerun()
     else:
         st.info("No petty cash transactions recorded.")
     conn.close()
@@ -877,7 +901,7 @@ elif menu == "Client Receipts & Projects":
                     conn.execute('''
                         INSERT INTO financials (trans_date, bill_no, particulars, payment_mode, income_amount, income_net, pnl_category)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (str(inv_date), inv_no, f"Client Payment - {c_name} ({p_name})", "Bank Transfer", rec_amt, rec_amt, "Revenue"))
+                    ''', (str(inv_date), inv_no, f"Client Payment - {c_name} ({p_name})", "Bank Transfer", rec_amt, rec_amt, "Subcontractors, Materials & Site Execution"))
                     
                 conn.commit()
                 st.success("Client payment logged and synchronized with Revenue!")
@@ -889,7 +913,15 @@ elif menu == "Client Receipts & Projects":
     if not df_cp.empty:
         df_cp['Outstanding Balance'] = df_cp['amount'] - df_cp['received_amount']
         st.dataframe(df_cp, use_container_width=True)
-        st.download_button("Export Client Accounts", data=to_excel(df_cp), file_name="Client_Payments.xlsx")
+        
+        cc_col1, cc_col2 = st.columns(2)
+        cc_col1.download_button("Export Client Accounts", data=to_excel(df_cp), file_name="Client_Payments.xlsx")
+        
+        if cc_col2.button("Delete / Clear Client Payments Data", type="primary", key="del_client_pay_data"):
+            conn.execute("DELETE FROM client_payments")
+            conn.commit()
+            st.success("Client payments data cleared successfully!")
+            st.rerun()
     else:
         st.info("No client invoices/payments recorded.")
     conn.close()
@@ -936,7 +968,15 @@ elif menu == "Vendor Payments & Aging":
     if not df_vp.empty:
         df_vp['Balance Due'] = df_vp['amount'] - df_vp['paid_amount']
         st.dataframe(df_vp, use_container_width=True)
-        st.download_button("Export Vendor Accounts", data=to_excel(df_vp), file_name="Vendor_Payables.xlsx")
+        
+        cv_col1, cv_col2 = st.columns(2)
+        cv_col1.download_button("Export Vendor Accounts", data=to_excel(df_vp), file_name="Vendor_Payables.xlsx")
+        
+        if cv_col2.button("Delete / Clear Vendor Data", type="primary", key="del_vendor_data"):
+            conn.execute("DELETE FROM vendor_payments")
+            conn.commit()
+            st.success("Vendor accounts data cleared successfully!")
+            st.rerun()
     else:
         st.info("No vendor bills recorded.")
     conn.close()
@@ -961,10 +1001,10 @@ elif menu == "Data Backup & Templates":
         st.error(f"Unable to read database file for backup: {e}")
         
     st.markdown("---")
-    st.subheader("System Reset Options")
-    st.warning("⚠️ Action Zone: These actions permanently alter system records.")
+    st.subheader("Action Zone")
+    st.warning("Warning: These actions permanently alter system records.")
     
-    if st.button("Purge Database Records", type="primary"):
+    if st.button("Purge Complete System Database", type="primary", key="purge_global"):
         conn = get_db_connection()
         conn.execute("DELETE FROM financials")
         conn.execute("DELETE FROM quotations")
@@ -975,5 +1015,5 @@ elif menu == "Data Backup & Templates":
         conn.execute("DELETE FROM projects")
         conn.commit()
         conn.close()
-        st.success("All table data wiped successfully!")
+        st.success("All system table data wiped successfully!")
         st.rerun()
