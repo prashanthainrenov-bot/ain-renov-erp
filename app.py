@@ -1,248 +1,21 @@
 import io
 import re
 import datetime
+from datetime import date
 import sqlite3
 import pandas as pd
 import streamlit as st
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Ain Renov ERP - Operations & Segregated Financials",
+    page_title="Ain Renov Technical Services - ERP System",
     page_icon="🏢",
     layout="wide"
 )
 
 # --- DATABASE PERSISTENCE SETUP ---
-DB_FILE = "app_database.db"
-
-def get_connection():
-    return sqlite3.connect(DB_FILE, check_same_thread=False)
-
-def init_db():
-    conn = get_connection()
-    c = conn.cursor()
-    
-    # 1. Financials Ledger Table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS financials (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sl_no INTEGER,
-            yes_no TEXT,
-            date TEXT,
-            payment_date TEXT,
-            bill_no TEXT,
-            particulars TEXT,
-            payment_mode TEXT,
-            is_petty_cash TEXT,
-            income_amount REAL,
-            income_vat REAL,
-            income_net REAL,
-            expense_amount REAL,
-            expense_vat REAL,
-            expense_net REAL
-        )
-    ''')
-    
-    # 2. Projects Table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sl_no INTEGER,
-            project_name TEXT,
-            client_name TEXT,
-            project_value REAL,
-            vat REAL,
-            total_amount REAL,
-            status TEXT
-        )
-    ''')
-
-    # 3. Quotations Table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS quotations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            quotation_id TEXT,
-            client_name TEXT,
-            project_name TEXT,
-            quotation_date TEXT,
-            expected_closure_date TEXT,
-            followup_reminder_date TEXT,
-            quotation_amount REAL,
-            feedback_status TEXT,
-            notes TEXT
-        )
-    ''')
-
-    # 4. Petty Cash Table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS petty_cash (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sl_no INTEGER,
-            date TEXT,
-            voucher_no TEXT,
-            description TEXT,
-            cash_in REAL,
-            cash_out REAL,
-            balance REAL,
-            remarks TEXT
-        )
-    ''')
-
-    # 5. Salary Profiles Table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS salary_profiles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            employee_name TEXT UNIQUE,
-            monthly_salary REAL,
-            months_worked INTEGER,
-            joining_date TEXT
-        )
-    ''')
-
-    # 6. Client Payments Tracker
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS client_payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_name TEXT,
-            project_name TEXT,
-            invoice_no TEXT,
-            invoice_date TEXT,
-            due_date TEXT,
-            invoice_amount REAL,
-            amount_received REAL,
-            balance_due REAL,
-            status TEXT
-        )
-    ''')
-
-    # 7. Vendor Payments Tracker & Ageing
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS vendor_payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            vendor_name TEXT,
-            bill_no TEXT,
-            bill_date TEXT,
-            due_date TEXT,
-            bill_amount REAL,
-            amount_paid REAL,
-            balance_payable REAL,
-            status TEXT
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# --- DATABASE HELPER FUNCTIONS ---
-def load_db_table(table_name):
-    conn = get_connection()
-    df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-    conn.close()
-    return df
-
-def clear_db_table(table_name):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(f"DELETE FROM {table_name}")
-    conn.commit()
-    conn.close()
-
-def delete_db_row(table_name, row_id):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(f"DELETE FROM {table_name} WHERE id = ?", (row_id,))
-    conn.commit()
-    conn.close()
-
-# --- SAFE TYPE CONVERTERS ---
-def safe_str(val, default=""):
-    if pd.isna(val) or val is None:
-        return default
-    return str(val).strip()
-
-def safe_float(val, default=0.0):
-    try:
-        if pd.isna(val) or val is None:
-            return default
-        return float(val)
-    except (ValueError, TypeError):
-        return default
-
-def safe_int(val, default=0):
-    try:
-        if pd.isna(val) or val is None:
-            return default
-        return int(val)
-    except (ValueError, TypeError):
-        return default
-
-def convert_df_to_excel(df):
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Data')
-    return buffer.getvalue()
-
-# --- TEMPLATE GENERATORS ---
-def generate_financial_template():
-    Below is a complete, revised, single-file `app.py` Streamlit application that addresses all your data parsing bugs, file upload issues, persistence errors, custom financial schedules, and reporting features.
-
----
-
-### Key Issues Fixed & Features Included
-
-1. **Fixed `sqlite3.OperationalError` & Persistence:**
-   * Removed authentication/login/email approval flows completely as requested.
-   * Replaced non-persistent file sessions with a robust SQLite database (`ain_renov_erp.db`) saved directly on disk.
-   * All uploaded data (Financials, Quotations, Petty Cash, Salaries, Projects, Clients, Vendors) is permanently saved and will **not disappear on refresh or when opening from different devices/systems**.
-   * Added buttons across all sections to **Export to Excel/PDF**, **Delete individual records**, **Upload new or historical data**, or **Clear all section data**.
-
-2. **Fixed Pandas "Truth Value of Series is Ambiguous" Error:**
-   * Handled conditional logic properly across all DataFrames using `.empty`, `.any()`, and direct element-wise checks (`df['col'].fillna('') != ''`).
-
-3. **Custom Financial Schedulers (VAT & Corporate Tax):**
-   * **VAT Quarters:** Customized specifically to your schedule:
-     * **Q1:** Mar – May
-     * **Q2:** Jun – Aug
-     * **Q3:** Sep – Nov
-     * **Q4:** Dec – Feb
-   * **Corporate Tax:** Year-over-Year (YoY) analysis running from January to December (2024 onwards).
-
-4. **Petty Cash Integration:**
-   * Added "Cash" / "Petty Cash" column support in financial uploads and transactions.
-   * Auto-populates Petty Cash balance, P&L cash expenses, and Balance Sheet entries.
-
-5. **Quotations & Staff Salary Trackers:**
-   * **Quotation Tracker:** Manages Client Name, Project Name, Quotation Date, Expected Closure Date, Amount, Status (In Process, Closed Lost, Closed Won), Follow-up Reminder Date, and regular status updates.
-   * **Staff Salary Tracker:** Pulls salary lines directly from financials or individual entries; computes monthly payroll, outstanding amounts, and employee dropdown history.
-
-6. **Full P&L, Vendor Aging & Financial Analysis:**
-   * Dynamic P&L breakdown by custom categories (Revenue, Direct Expenses, Petty Cash Expenses, Salaries, Admin, Overhead).
-   * Vendor Payment Tracker & Aging Analysis (0–30, 31–60, 61–90, 90+ days).
-   * Downloadable templates for Financials, Quotations, Petty Cash, and Vendors provided in the sidebar.
-
----
-
-### Complete `app.py` Code
-
-```python
-import streamlit as st
-import pandas as pd
-import numpy as np
-import sqlite3
-import io
-import datetime
-from datetime import date
-
-# Set page config
-st.set_page_config(page_title="Ain Renov Technical Services - ERP System", layout="wide")
-
 DB_FILE = "ain_renov_erp.db"
 
-# ---------------------------------------------------------
-# DATABASE INITIALIZATION & PERSISTENCE
-# ---------------------------------------------------------
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -252,7 +25,7 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Financials / P&L / Balance Sheet Table
+    # 1. Financials Ledger Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS financials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -266,7 +39,7 @@ def init_db():
         )
     ''')
     
-    # Quotation Tracker Table
+    # 2. Quotation Tracker Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS quotations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -281,7 +54,7 @@ def init_db():
         )
     ''')
     
-    # Staff Salary Tracker Table
+    # 3. Staff Salary Tracker Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS salaries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -296,7 +69,7 @@ def init_db():
         )
     ''')
     
-    # Petty Cash Table
+    # 4. Petty Cash Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS petty_cash (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,7 +82,7 @@ def init_db():
         )
     ''')
     
-    # Vendor & Client Trackers
+    # 5. Vendor Payments Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS vendor_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,6 +96,7 @@ def init_db():
         )
     ''')
     
+    # 6. Client Payments Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS client_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -341,9 +115,7 @@ def init_db():
 
 init_db()
 
-# ---------------------------------------------------------
-# UTILITY & CONVERSION FUNCTIONS
-# ---------------------------------------------------------
+# --- UTILITY & CONVERSION FUNCTIONS ---
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -362,16 +134,14 @@ def get_vat_quarter(dt_str):
             return f"{year} Q2 (Jun-Aug)"
         elif month in [9, 10, 11]:
             return f"{year} Q3 (Sep-Nov)"
-        elif month in [12]:
+        elif month == 12:
             return f"{year}-{year+1} Q4 (Dec-Feb)"
         else:  # Jan, Feb
             return f"{year-1}-{year} Q4 (Dec-Feb)"
-    except:
+    except Exception:
         return "Unknown Quarter"
 
-# ---------------------------------------------------------
-# SIDEBAR TEMPLATES & NAVIGATION
-# ---------------------------------------------------------
+# --- SIDEBAR NAVIGATION & TEMPLATES ---
 st.sidebar.title("Ain Renov ERP")
 st.sidebar.markdown("**General Manager Portal**")
 
@@ -393,7 +163,6 @@ menu = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.subheader("Download Upload Templates")
 
-# Template Generator
 financial_tpl = pd.DataFrame({
     "trans_date": ["2024-03-15", "2024-04-10"],
     "category": ["Revenue", "Direct Expense"],
@@ -428,10 +197,7 @@ st.sidebar.download_button("Financials Template", data=to_excel(financial_tpl), 
 st.sidebar.download_button("Quotations Template", data=to_excel(quote_tpl), file_name="Quotations_Template.xlsx")
 st.sidebar.download_button("Petty Cash Template", data=to_excel(petty_tpl), file_name="Petty_Cash_Template.xlsx")
 
-
-# ---------------------------------------------------------
-# 1. DASHBOARD OVERVIEW
-# ---------------------------------------------------------
+# --- 1. DASHBOARD OVERVIEW ---
 if menu == "Dashboard Overview":
     st.title("Executive Dashboard Overview")
     
@@ -472,16 +238,12 @@ if menu == "Dashboard Overview":
         if not df_petty.empty:
             st.dataframe(df_petty[['entry_date', 'description', 'cash_in', 'cash_out', 'approved_by']].tail(5), use_container_width=True)
 
-
-# ---------------------------------------------------------
-# 2. P&L & FINANCIAL STATEMENTS
-# ---------------------------------------------------------
+# --- 2. P&L & FINANCIAL STATEMENTS ---
 elif menu == "P&L & Financial Statements":
     st.title("Profit & Loss Statement & General Ledger")
     
     conn = get_db_connection()
     
-    # File Uploader Option
     with st.expander("Upload Financial Entries (Excel/CSV)", expanded=False):
         uploaded_file = st.file_uploader("Choose Financial File", type=["xlsx", "csv"], key="fin_upload")
         if uploaded_file is not None:
@@ -491,7 +253,6 @@ elif menu == "P&L & Financial Statements":
                 else:
                     df_up = pd.read_excel(uploaded_file)
                 
-                # Normalize column names
                 df_up.columns = [c.lower().replace(" ", "_") for c in df_up.columns]
                 
                 for _, row in df_up.iterrows():
@@ -508,11 +269,10 @@ elif menu == "P&L & Financial Statements":
                         str(row.get('account_head', 'General'))
                     ))
                 conn.commit()
-                st.success("Financial records uploaded and stored successfully!")
+                st.success("Financial records uploaded successfully!")
             except Exception as e:
                 st.error(f"Error processing file: {e}")
                 
-    # Manual Entry Option
     with st.expander("Add Single Manual Entry", expanded=False):
         with st.form("fin_form"):
             col1, col2, col3 = st.columns(3)
@@ -585,10 +345,7 @@ elif menu == "P&L & Financial Statements":
     else:
         st.info("No financial data found. Upload or enter entries above.")
 
-
-# ---------------------------------------------------------
-# 3. VAT & CORPORATE TAX
-# ---------------------------------------------------------
+# --- 3. VAT & CORPORATE TAX ---
 elif menu == "VAT & Corporate Tax":
     st.title("UAE Corporate Tax & VAT Schedule Tracker")
     
@@ -643,10 +400,7 @@ elif menu == "VAT & Corporate Tax":
         else:
             st.info("No transaction data available for Corporate Tax calculations.")
 
-
-# ---------------------------------------------------------
-# 4. QUOTATION TRACKER
-# ---------------------------------------------------------
+# --- 4. QUOTATION TRACKER ---
 elif menu == "Quotation Tracker":
     st.title("Quotation Pipeline & Follow-Up Tracker")
     
@@ -708,7 +462,11 @@ elif menu == "Quotation Tracker":
     st.markdown("---")
     st.subheader("Update Quotation Status & Follow-ups")
     if not df_quotes.empty:
-        q_id = st.selectbox("Select Quotation to Update", df_quotes['id'].tolist(), format_func=lambda x: f"ID {x}: {df_quotes.loc[df_quotes['id']==x, 'client_name'].values[0]} - {df_quotes.loc[df_quotes['id']==x, 'project_name'].values[0]}")
+        q_id = st.selectbox(
+            "Select Quotation to Update", 
+            df_quotes['id'].tolist(), 
+            format_func=lambda x: f"ID {x}: {df_quotes.loc[df_quotes['id']==x, 'client_name'].values[0]} - {df_quotes.loc[df_quotes['id']==x, 'project_name'].values[0]}"
+        )
         
         current_row = df_quotes[df_quotes['id'] == q_id].iloc[0]
         
@@ -744,10 +502,7 @@ elif menu == "Quotation Tracker":
         st.info("No quotations found.")
     conn.close()
 
-
-# ---------------------------------------------------------
-# 5. STAFF SALARY TRACKER
-# ---------------------------------------------------------
+# --- 5. STAFF SALARY TRACKER ---
 elif menu == "Staff Salary Tracker":
     st.title("Staff Salary & Payroll Outstanding Tracker")
     
@@ -776,7 +531,6 @@ elif menu == "Staff Salary Tracker":
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (emp_name, sal_month, basic, allowances, deductions, paid, outstanding, str(pay_date)))
                 
-                # Auto-post to Financials expense ledger
                 conn.execute('''
                     INSERT INTO financials (trans_date, category, description, amount, trans_type, is_cash, account_head)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -822,10 +576,7 @@ elif menu == "Staff Salary Tracker":
         st.info("No salary records created yet.")
     conn.close()
 
-
-# ---------------------------------------------------------
-# 6. PETTY CASH MANAGEMENT
-# ---------------------------------------------------------
+# --- 6. PETTY CASH MANAGEMENT ---
 elif menu == "Petty Cash Management":
     st.title("Petty Cash Register & Reconciliation")
     
@@ -877,7 +628,6 @@ elif menu == "Petty Cash Management":
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (str(p_date), p_desc, cash_in, cash_out, p_cat, p_app))
                 
-                # Auto-sync expense to financials if cash_out > 0
                 if cash_out > 0:
                     conn.execute('''
                         INSERT INTO financials (trans_date, category, description, amount, trans_type, is_cash, account_head)
@@ -915,10 +665,7 @@ elif menu == "Petty Cash Management":
         st.info("No petty cash logs available.")
     conn.close()
 
-
-# ---------------------------------------------------------
-# 7. CLIENT RECEIPTS & PROJECTS
-# ---------------------------------------------------------
+# --- 7. CLIENT RECEIPTS & PROJECTS ---
 elif menu == "Client Receipts & Projects":
     st.title("Client Receipts & Project-Wise Analysis")
     
@@ -944,7 +691,6 @@ elif menu == "Client Receipts & Projects":
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (client, project, inv_no, str(inv_date), inv_amt, rcvd_amt, status))
                 
-                # Auto Sync to Financials
                 if rcvd_amt > 0:
                     conn.execute('''
                         INSERT INTO financials (trans_date, category, description, amount, trans_type, is_cash, account_head)
@@ -975,10 +721,7 @@ elif menu == "Client Receipts & Projects":
         st.info("No client payment entries recorded.")
     conn.close()
 
-
-# ---------------------------------------------------------
-# 8. VENDOR PAYMENTS & AGING
-# ---------------------------------------------------------
+# --- 8. VENDOR PAYMENTS & AGING ---
 elif menu == "Vendor Payments & Aging":
     st.title("Vendor Payment Tracker & Aging Analysis")
     
@@ -1055,10 +798,7 @@ elif menu == "Vendor Payments & Aging":
         st.info("No vendor invoices logged.")
     conn.close()
 
-
-# ---------------------------------------------------------
-# 9. DATA BACKUP & TEMPLATES
-# ---------------------------------------------------------
+# --- 9. DATA BACKUP & TEMPLATES ---
 elif menu == "Data Backup & Templates":
     st.title("Data Backup & Maintenance")
     st.write("Download complete copies of your stored database tables below:")
