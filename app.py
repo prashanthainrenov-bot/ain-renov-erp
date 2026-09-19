@@ -29,13 +29,21 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS financials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sl_no INTEGER,
+            yes_no TEXT,
             trans_date TEXT,
-            category TEXT,
-            description TEXT,
-            amount REAL,
-            trans_type TEXT,
-            is_cash INTEGER DEFAULT 0,
-            account_head TEXT
+            payment_date TEXT,
+            bill_no TEXT,
+            particulars TEXT,
+            payment_mode TEXT,
+            is_petty_cash TEXT,
+            income_amount REAL,
+            income_vat REAL,
+            income_net REAL,
+            expense_amount REAL,
+            expense_vat REAL,
+            expense_net REAL,
+            pnl_category TEXT
         )
     ''')
     
@@ -129,6 +137,38 @@ def init_db():
 
 init_db()
 
+# --- RULE-BASED P&L HEAD CLASSIFIER ---
+def classify_pnl_category(particulars_str, is_income=False):
+    txt = str(particulars_str).upper()
+    if is_income:
+        if "INVESTMENT" in txt or "CAPITAL" in txt:
+            return "CAPITAL"
+        elif "LOAN" in txt:
+            return "loan"
+        return "Revenue"
+    
+    # Expense Classification
+    if any(k in txt for k in ["SALARY", "SALARIES", "WAGE", "COMMISSION", "PARTNER", "PRAMOTH", "PRASHANTH"]):
+        return "Salaries, Commissions & Partner Distributions"
+    elif any(k in txt for k in ["LICENSE", "TAX", "GOVT", "VISA", "MUNICIPALITY", "LEGAL", "AUDIT", "TYPING"]):
+        return "Admin, Licensing, Tax & Banking"
+    elif any(k in txt for k in ["BANK CHARGES", "INTEREST", "BANK FEES", "CHQ"]):
+        return "Bank"
+    elif any(k in txt for k in ["CAPITAL", "EQUITY"]):
+        return "CAPITAL"
+    elif any(k in txt for k in ["LOAN", "REPAYMENT", "EMI"]):
+        return "loan"
+    elif any(k in txt for k in ["FUEL", "TRANSPORT", "VEHICLE", "SALIK", "CAR", "REPAIR", "VAN", "PARKING"]):
+        return "Logistics, Vehicle & Transport"
+    elif any(k in txt for k in ["FOOD", "TEA", "REFRESHMENT", "HOSPITALITY", "PETTY CASH", "RESTURANT"]):
+        return "Petty Cash & Client Hospitality"
+    elif any(k in txt for k in ["DEWA", "SEWA", "FEWA", "ETISALAT", "DU", "INTERNET", "MOBILE", "UTILITY", "PHONE"]):
+        return "Utilities & Telecommunications"
+    elif any(k in txt for k in ["MATERIAL", "SUBCONTRACTOR", "ALUMINIUM", "STEEL", "GLASS", "HARDWARE", "EQUIPMENT", "SITE", "LABOUR"]):
+        return "Subcontractors, Materials & Site Execution"
+    else:
+        return "Subcontractors, Materials & Site Execution"
+
 # --- UTILITY & CONVERSION FUNCTIONS ---
 def to_excel(df):
     output = io.BytesIO()
@@ -150,7 +190,7 @@ def get_vat_quarter(dt_str):
             return f"{year} Q3 (Sep-Nov)"
         elif month == 12:
             return f"{year}-{year+1} Q4 (Dec-Feb)"
-        else:  # Jan, Feb
+        else:
             return f"{year-1}-{year} Q4 (Dec-Feb)"
     except Exception:
         return "Unknown Quarter"
@@ -179,13 +219,20 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Download Upload Templates")
 
 financial_tpl = pd.DataFrame({
-    "trans_date": ["2024-03-15", "2024-04-10"],
-    "category": ["Revenue", "Direct Expense"],
-    "description": ["Villa Renovation Project", "Material Purchase"],
-    "amount": [15000.0, 4500.0],
-    "trans_type": ["Income", "Expense"],
-    "is_cash": [0, 1],
-    "account_head": ["Sales", "Petty Cash"]
+    "SL NO": [1, 2],
+    "YES/NO": ["YES", "YES"],
+    "DATE": ["2024-09-20", "2024-09-20"],
+    "PAYMENT DATE": ["", ""],
+    "BILL/ INVOICE NUMBER": ["138231", "138232"],
+    "PARTICULARS": ["UNI-T DIGITAL DISTANCE METER", "PAID TOWARDS LICENSE COST"],
+    "PAYMENT MODE (Cash/Bank)": ["Bank Transfer", "Cash"],
+    "IS PETTY CASH (YES/NO)": ["NO", "YES"],
+    "INCOME_AMOUNT": [0.0, 0.0],
+    "INCOME_VAT": [0.0, 0.0],
+    "INCOME_NET": [0.0, 0.0],
+    "EXPENSE_AMOUNT": [100.0, 29000.0],
+    "EXPENSE_VAT": [5.5, 0.0],
+    "EXPENSE_NET": [105.5, 29000.0]
 })
 
 project_tpl = pd.DataFrame({
@@ -236,8 +283,8 @@ if menu == "Dashboard Overview":
     
     col1, col2, col3, col4 = st.columns(4)
     
-    tot_inc = df_fin[df_fin['trans_type'] == 'Income']['amount'].sum() if not df_fin.empty else 0.0
-    tot_exp = df_fin[df_fin['trans_type'] == 'Expense']['amount'].sum() if not df_fin.empty else 0.0
+    tot_inc = df_fin['income_net'].sum() if not df_fin.empty else 0.0
+    tot_exp = df_fin['expense_net'].sum() if not df_fin.empty else 0.0
     net_profit = tot_inc - tot_exp
     
     active_projects_count = len(df_proj[df_proj['status'] == 'In Progress']) if not df_proj.empty else 0
@@ -246,9 +293,9 @@ if menu == "Dashboard Overview":
     petty_out = df_petty['cash_out'].sum() if not df_petty.empty else 0.0
     petty_bal = petty_in - petty_out
     
-    col1.metric("Total Revenue", f"AED {tot_inc:,.2f}")
-    col2.metric("Total Expenses", f"AED {tot_exp:,.2f}")
-    col3.metric("Net Profit", f"AED {net_profit:,.2f}")
+    col1.metric("Total Income (Net AED)", f"AED {tot_inc:,.2f}")
+    col2.metric("Total Expense (Net AED)", f"AED {tot_exp:,.2f}")
+    col3.metric("Net Surplus / Profit", f"AED {net_profit:,.2f}")
     col4.metric("Active Projects", f"{active_projects_count}")
     
     st.markdown("---")
@@ -270,97 +317,121 @@ if menu == "Dashboard Overview":
 
 # --- 2. P&L & FINANCIAL STATEMENTS ---
 elif menu == "P&L & Financial Statements":
-    st.title("Profit & Loss Statement & General Ledger")
+    st.title("Profit & Loss Statement & Categorized Ledger")
     
     conn = get_db_connection()
     
-    with st.expander("Upload Financial Entries (Excel/CSV)", expanded=False):
+    with st.expander("Upload Financial Ledger (.xlsx / .csv)", expanded=False):
         uploaded_file = st.file_uploader("Choose Financial File", type=["xlsx", "csv"], key="fin_upload")
         if uploaded_file is not None:
             try:
                 df_up = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-                df_up.columns = [c.lower().replace(" ", "_") for c in df_up.columns]
                 
-                for _, row in df_up.iterrows():
+                c_map = {str(col).strip().upper(): col for col in df_up.columns}
+                
+                for idx, row in df_up.iterrows():
+                    sl_no = row.get(c_map.get('SL NO', 'SL NO'), idx + 1)
+                    yes_no = str(row.get(c_map.get('YES/NO', 'YES/NO'), 'YES'))
+                    t_date = str(row.get(c_map.get('DATE', 'DATE'), str(date.today())))
+                    p_date = str(row.get(c_map.get('PAYMENT DATE', 'PAYMENT DATE'), ''))
+                    bill_no = str(row.get(c_map.get('BILL/ INVOICE NUMBER', 'BILL/ INVOICE NUMBER'), ''))
+                    particulars = str(row.get(c_map.get('PARTICULARS', 'PARTICULARS'), ''))
+                    pmode = str(row.get(c_map.get('PAYMENT MODE (CASH/BANK)', 'PAYMENT MODE (CASH/BANK)'), 'Bank Transfer'))
+                    is_petty = str(row.get(c_map.get('IS PETTY CASH (YES/NO)', 'IS PETTY CASH (YES/NO)'), 'NO'))
+                    
+                    inc_amt = float(row.get(c_map.get('INCOME_AMOUNT', 'INCOME_AMOUNT'), 0.0) or 0.0)
+                    inc_vat = float(row.get(c_map.get('INCOME_VAT', 'INCOME_VAT'), 0.0) or 0.0)
+                    inc_net = float(row.get(c_map.get('INCOME_NET', 'INCOME_NET'), 0.0) or (inc_amt + inc_vat))
+                    
+                    exp_amt = float(row.get(c_map.get('EXPENSE_AMOUNT', 'EXPENSE_AMOUNT'), 0.0) or 0.0)
+                    exp_vat = float(row.get(c_map.get('EXPENSE_VAT', 'EXPENSE_VAT'), 0.0) or 0.0)
+                    exp_net = float(row.get(c_map.get('EXPENSE_NET', 'EXPENSE_NET'), 0.0) or (exp_amt + exp_vat))
+                    
+                    is_inc = inc_net > 0
+                    pnl_cat = classify_pnl_category(particulars, is_income=is_inc)
+                    
                     conn.execute('''
-                        INSERT INTO financials (trans_date, category, description, amount, trans_type, is_cash, account_head)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO financials (
+                            sl_no, yes_no, trans_date, payment_date, bill_no, particulars,
+                            payment_mode, is_petty_cash, income_amount, income_vat, income_net,
+                            expense_amount, expense_vat, expense_net, pnl_category
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
-                        str(row.get('trans_date', date.today())),
-                        str(row.get('category', 'General')),
-                        str(row.get('description', '')),
-                        float(row.get('amount', 0.0)),
-                        str(row.get('trans_type', 'Expense')),
-                        int(row.get('is_cash', 0)),
-                        str(row.get('account_head', 'General'))
+                        sl_no, yes_no, t_date, p_date, bill_no, particulars,
+                        pmode, is_petty, inc_amt, inc_vat, inc_net,
+                        exp_amt, exp_vat, exp_net, pnl_cat
                     ))
+                    
+                    if is_petty.upper() == "YES" or "CASH" in pmode.upper():
+                        conn.execute('''
+                            INSERT INTO petty_cash (entry_date, description, cash_in, cash_out, category, approved_by)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        ''', (t_date, particulars, inc_net, exp_net, pnl_cat, "Auto-Financial Upload"))
+                        
                 conn.commit()
-                st.success("Financial records uploaded successfully!")
+                st.success("Financial records successfully saved and categorized!")
+                st.rerun()
             except Exception as e:
                 st.error(f"Error processing file: {e}")
-                
-    with st.expander("Add Single Manual Entry", expanded=False):
-        with st.form("fin_form"):
-            col1, col2, col3 = st.columns(3)
-            t_date = col1.date_input("Transaction Date", date.today())
-            t_type = col2.selectbox("Type", ["Income", "Expense"])
-            category = col3.selectbox("Category", ["Revenue", "Direct Expense", "Staff Salary", "Petty Cash Expense", "Overhead", "Administrative"])
-            
-            col4, col5, col6 = st.columns(3)
-            amount = col4.number_input("Amount (AED)", min_value=0.0, step=100.0)
-            account_head = col5.selectbox("Account Head", ["Bank Transfer", "Cheque", "Cash/Petty Cash"])
-            description = col6.text_input("Description/Notes")
-            
-            is_cash = 1 if account_head == "Cash/Petty Cash" else 0
-            
-            if st.form_submit_button("Save Financial Entry"):
-                conn.execute('''
-                    INSERT INTO financials (trans_date, category, description, amount, trans_type, is_cash, account_head)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (str(t_date), category, description, amount, t_type, is_cash, account_head))
-                conn.commit()
-                st.success("Entry added!")
-                st.rerun()
 
     df_fin = pd.read_sql("SELECT * FROM financials", conn)
     conn.close()
 
     st.markdown("---")
-    st.subheader("Segregated Profit & Loss Summary")
+    st.subheader("Segregated P&L Heads Statement")
+    
+    pnl_heads = [
+        "Admin, Licensing, Tax & Banking",
+        "Bank",
+        "CAPITAL",
+        "loan",
+        "Logistics, Vehicle & Transport",
+        "Petty Cash & Client Hospitality",
+        "Salaries, Commissions & Partner Distributions",
+        "Subcontractors, Materials & Site Execution",
+        "Utilities & Telecommunications"
+    ]
     
     if not df_fin.empty:
-        inc_df = df_fin[df_fin['trans_type'] == 'Income']
-        exp_df = df_fin[df_fin['trans_type'] == 'Expense']
+        df_fin['year'] = pd.to_datetime(df_fin['trans_date'], errors='coerce').dt.year
+        years = sorted([int(y) for y in df_fin['year'].dropna().unique() if y >= 2024])
+        if not years:
+            years = [2024]
+            
+        selected_year = st.selectbox("Select Financial Year for P&L", years, index=len(years)-1)
+        df_y = df_fin[df_fin['year'] == selected_year]
         
-        tot_rev = inc_df['amount'].sum()
-        direct_cost = exp_df[exp_df['category'] == 'Direct Expense']['amount'].sum()
-        salaries = exp_df[exp_df['category'] == 'Staff Salary']['amount'].sum()
-        petty_exp = exp_df[exp_df['category'] == 'Petty Cash Expense']['amount'].sum()
-        overheads = exp_df[exp_df['category'].isin(['Overhead', 'Administrative'])]['amount'].sum()
-        other_exp = exp_df[~exp_df['category'].isin(['Direct Expense', 'Staff Salary', 'Petty Cash Expense', 'Overhead', 'Administrative'])]['amount'].sum()
+        tot_rev = df_y['income_net'].sum()
         
-        gross_profit = tot_rev - direct_cost
-        tot_expenses = direct_cost + salaries + petty_exp + overheads + other_exp
-        net_profit = tot_rev - tot_expenses
+        st.write(f"### Total Revenue / Income ({selected_year}): AED {tot_rev:,.2f}")
         
-        pnl_data = [
-            {"P&L Section": "1. Revenue / Gross Sales", "Amount (AED)": tot_rev},
-            {"P&L Section": "2. Direct Expenses (Cost of Sales)", "Amount (AED)": -direct_cost},
-            {"P&L Section": "GROSS PROFIT", "Amount (AED)": gross_profit},
-            {"P&L Section": "3. Staff Salaries & Payroll", "Amount (AED)": -salaries},
-            {"P&L Section": "4. Petty Cash Operating Expenses", "Amount (AED)": -petty_exp},
-            {"P&L Section": "5. Overheads & Administrative Expenses", "Amount (AED)": -overheads},
-            {"P&L Section": "6. Other Miscellaneous Expenses", "Amount (AED)": -other_exp},
-            {"P&L Section": "NET OPERATING PROFIT", "Amount (AED)": net_profit}
-        ]
+        table_rows = []
+        tot_expenses = 0.0
         
-        st.table(pd.DataFrame(pnl_data))
+        for head in pnl_heads:
+            sub_exp = df_y[df_y['pnl_category'] == head]['expense_net'].sum()
+            tot_expenses += sub_exp
+            table_rows.append({
+                "P&L Head / Category": head,
+                "Expense Amount (AED)": sub_exp,
+                "% of Total Revenue": f"{(sub_exp / tot_rev * 100):.2f}%" if tot_rev > 0 else "0.00%"
+            })
+            
+        net_margin = tot_rev - tot_expenses
         
-        st.subheader("Detailed Financial Transactions Ledger")
+        pnl_df = pd.DataFrame(table_rows)
+        st.dataframe(pnl_df, use_container_width=True)
+        
+        col_m1, col_m2 = st.columns(2)
+        col_m1.metric("Total Operating Expenses", f"AED {tot_expenses:,.2f}")
+        col_m2.metric("Net Profit / Surplus", f"AED {net_margin:,.2f}")
+        
+        st.markdown("---")
+        st.subheader("Master Transaction Ledger")
         st.dataframe(df_fin, use_container_width=True)
         
         col_d1, col_d2 = st.columns(2)
-        col_d1.download_button("Export Ledger to Excel", data=to_excel(df_fin), file_name="Financial_Ledger.xlsx")
+        col_d1.download_button("Export Ledger to Excel", data=to_excel(df_fin), file_name=f"Financial_Ledger_{selected_year}.xlsx")
         
         if col_d2.button("Clear All Financial Data", type="primary"):
             c_conn = get_db_connection()
@@ -369,7 +440,7 @@ elif menu == "P&L & Financial Statements":
             c_conn.close()
             st.rerun()
     else:
-        st.info("No financial data found. Upload or enter entries above.")
+        st.info("No financial data uploaded yet.")
 
 # --- 3. VAT & CORPORATE TAX ---
 elif menu == "VAT & Corporate Tax":
@@ -383,20 +454,19 @@ elif menu == "VAT & Corporate Tax":
     
     with tab1:
         st.subheader("Quarterly VAT Reporting Schedule")
-        st.caption("Quarters: Q1 (Mar-May), Q2 (Jun-Aug), Q3 (Sep-Nov), Q4 (Dec-Feb)")
+        st.caption("Custom Quarters: Q1 (Mar-May), Q2 (Jun-Aug), Q3 (Sep-Nov), Q4 (Dec-Feb)")
         
         if not df_fin.empty:
             df_fin['vat_quarter'] = df_fin['trans_date'].apply(get_vat_quarter)
             
-            vat_summary = df_fin.groupby(['vat_quarter', 'trans_type'])['amount'].sum().unstack(fill_value=0.0).reset_index()
-            if 'Income' not in vat_summary.columns:
-                vat_summary['Income'] = 0.0
-            if 'Expense' not in vat_summary.columns:
-                vat_summary['Expense'] = 0.0
-                
-            vat_summary['Output VAT (5%)'] = vat_summary['Income'] * 0.05
-            vat_summary['Input VAT (5%)'] = vat_summary['Expense'] * 0.05
-            vat_summary['Net VAT Payable'] = vat_summary['Output VAT (5%)'] - vat_summary['Input VAT (5%)']
+            vat_summary = df_fin.groupby('vat_quarter').agg({
+                'income_amount': 'sum',
+                'income_vat': 'sum',
+                'expense_amount': 'sum',
+                'expense_vat': 'sum'
+            }).reset_index()
+            
+            vat_summary['Net VAT Payable / (Recoverable)'] = vat_summary['income_vat'] - vat_summary['expense_vat']
             
             st.dataframe(vat_summary, use_container_width=True)
             st.download_button("Export VAT Report", data=to_excel(vat_summary), file_name="VAT_Quarterly_Report.xlsx")
@@ -411,14 +481,13 @@ elif menu == "VAT & Corporate Tax":
             df_fin['year'] = pd.to_datetime(df_fin['trans_date'], errors='coerce').dt.year
             df_2024 = df_fin[df_fin['year'] >= 2024]
             
-            yoy_summary = df_2024.groupby(['year', 'trans_type'])['amount'].sum().unstack(fill_value=0.0).reset_index()
-            if 'Income' not in yoy_summary.columns:
-                yoy_summary['Income'] = 0.0
-            if 'Expense' not in yoy_summary.columns:
-                yoy_summary['Expense'] = 0.0
-                
-            yoy_summary['Net Profit'] = yoy_summary['Income'] - yoy_summary['Expense']
-            yoy_summary['Taxable Income (> 375,000 AED)'] = yoy_summary['Net Profit'].apply(lambda x: max(0.0, x - 375000.0))
+            yoy_summary = df_2024.groupby('year').agg({
+                'income_net': 'sum',
+                'expense_net': 'sum'
+            }).reset_index()
+            
+            yoy_summary['Net Taxable Profit'] = yoy_summary['income_net'] - yoy_summary['expense_net']
+            yoy_summary['Taxable Income (> 375,000 AED)'] = yoy_summary['Net Taxable Profit'].apply(lambda x: max(0.0, x - 375000.0))
             yoy_summary['Estimated Corporate Tax (9%)'] = yoy_summary['Taxable Income (> 375,000 AED)'] * 0.09
             
             st.dataframe(yoy_summary, use_container_width=True)
@@ -632,8 +701,18 @@ elif menu == "Staff Salary Tracker":
     st.title("Staff Salary & Payroll Outstanding Tracker")
     
     conn = get_db_connection()
+    df_fin = pd.read_sql("SELECT * FROM financials", conn)
     
-    with st.expander("Add Monthly Salary Entry", expanded=False):
+    st.subheader("Disbursements Identified in Financial Ledger")
+    if not df_fin.empty:
+        sal_lines = df_fin[df_fin['pnl_category'] == 'Salaries, Commissions & Partner Distributions']
+        if not sal_lines.empty:
+            st.dataframe(sal_lines[['trans_date', 'particulars', 'expense_net', 'payment_mode']], use_container_width=True)
+        else:
+            st.info("No salary entries classified in financial ledger.")
+    
+    st.markdown("---")
+    with st.expander("Add Employee Salary Agreement / Monthly Record", expanded=False):
         with st.form("sal_form"):
             col1, col2, col3 = st.columns(3)
             emp_name = col1.text_input("Employee Name")
@@ -656,13 +735,8 @@ elif menu == "Staff Salary Tracker":
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (emp_name, sal_month, basic, allowances, deductions, paid, outstanding, str(pay_date)))
                 
-                conn.execute('''
-                    INSERT INTO financials (trans_date, category, description, amount, trans_type, is_cash, account_head)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (str(pay_date), "Staff Salary", f"Salary for {emp_name} ({sal_month})", paid, "Expense", 0, "Bank Transfer"))
-                
                 conn.commit()
-                st.success("Salary recorded and posted to P&L!")
+                st.success("Salary record created successfully!")
                 st.rerun()
 
     df_sal = pd.read_sql("SELECT * FROM salaries", conn)
@@ -698,7 +772,7 @@ elif menu == "Staff Salary Tracker":
             conn.commit()
             st.rerun()
     else:
-        st.info("No salary records created yet.")
+        st.info("No manual salary records created yet.")
     conn.close()
 
 # --- 7. PETTY CASH MANAGEMENT ---
@@ -753,14 +827,8 @@ elif menu == "Petty Cash Management":
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (str(p_date), p_desc, cash_in, cash_out, p_cat, p_app))
                 
-                if cash_out > 0:
-                    conn.execute('''
-                        INSERT INTO financials (trans_date, category, description, amount, trans_type, is_cash, account_head)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (str(p_date), "Petty Cash Expense", f"{p_cat}: {p_desc}", cash_out, "Expense", 1, "Cash/Petty Cash"))
-                
                 conn.commit()
-                st.success("Petty Cash recorded and synced with Financials!")
+                st.success("Petty Cash recorded!")
                 st.rerun()
 
     df_pc = pd.read_sql("SELECT * FROM petty_cash", conn)
@@ -816,14 +884,8 @@ elif menu == "Client Receipts & Projects":
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (client, project, inv_no, str(inv_date), inv_amt, rcvd_amt, status))
                 
-                if rcvd_amt > 0:
-                    conn.execute('''
-                        INSERT INTO financials (trans_date, category, description, amount, trans_type, is_cash, account_head)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (str(inv_date), "Revenue", f"Client Payment: {client} - Project: {project}", rcvd_amt, "Income", 0, "Bank Transfer"))
-                
                 conn.commit()
-                st.success("Client payment recorded and auto-posted to P&L!")
+                st.success("Client payment recorded!")
                 st.rerun()
 
     df_cli = pd.read_sql("SELECT * FROM client_payments", conn)
@@ -871,12 +933,6 @@ elif menu == "Vendor Payments & Aging":
                     INSERT INTO vendor_payments (vendor_name, invoice_no, invoice_date, due_date, amount, paid_amount, status)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (vendor, inv_no, str(inv_date), str(due_date), inv_amt, paid_amt, status))
-                
-                if paid_amt > 0:
-                    conn.execute('''
-                        INSERT INTO financials (trans_date, category, description, amount, trans_type, is_cash, account_head)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (str(inv_date), "Direct Expense", f"Vendor Payment: {vendor}", paid_amt, "Expense", 0, "Bank Transfer"))
                 
                 conn.commit()
                 st.success("Vendor bill recorded!")
