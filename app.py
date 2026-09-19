@@ -13,6 +13,9 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- AUTHORIZATION ADMIN EMAIL ---
+ADMIN_EMAIL = "prashanthainrenov@gmail.com"
+
 # --- DATABASE PERSISTENCE SETUP ---
 DB_FILE = "app_database.db"
 
@@ -31,10 +34,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE,
+            email TEXT,
             password_hash TEXT,
             full_name TEXT,
             role TEXT,
-            status TEXT
+            status TEXT,
+            request_date TEXT
         )
     ''')
 
@@ -146,13 +151,13 @@ def init_db():
         )
     ''')
 
-    # Seed Default Admin Account if missing
-    c.execute("SELECT * FROM users WHERE username = 'admin'")
+    # Seed Default Admin Account (Prashanth) if missing
+    c.execute("SELECT * FROM users WHERE email = ?", (ADMIN_EMAIL,))
     if not c.fetchone():
         c.execute('''
-            INSERT INTO users (username, password_hash, full_name, role, status)
-            VALUES (?, ?, ?, ?, ?)
-        ''', ('admin', hash_password('admin123'), 'General Manager', 'ADMIN', 'ACTIVE'))
+            INSERT INTO users (username, email, password_hash, full_name, role, status, request_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', ('prashanth', ADMIN_EMAIL, hash_password('admin123'), 'Prashanth Kumar KV', 'ADMIN', 'ACTIVE', str(datetime.date.today())))
     
     conn.commit()
     conn.close()
@@ -212,57 +217,63 @@ def convert_df_to_excel(df):
 if "user" not in st.session_state:
     st.session_state.user = None
 
-def login_user(username, password):
+def login_user(username_or_email, password):
     conn = get_connection()
     c = conn.cursor()
     p_hash = hash_password(password)
-    c.execute("SELECT username, full_name, role, status FROM users WHERE username = ? AND password_hash = ?", (username, p_hash))
+    c.execute('''
+        SELECT username, email, full_name, role, status FROM users 
+        WHERE (username = ? OR email = ?) AND password_hash = ?
+    ''', (username_or_email, username_or_email, p_hash))
     user_rec = c.fetchone()
     conn.close()
     return user_rec
 
 if st.session_state.user is None:
-    st.title("🔒 Ain Renov ERP - Secure Web Sign In")
-    tab_log, tab_sign = st.tabs(["🔑 Sign In", "📝 Request New User Account"])
+    st.title("🔒 Ain Renov ERP - Secure Web Access")
+    tab_log, tab_sign = st.tabs(["🔑 Sign In", "📝 Request Authorization for New Member"])
     
     with tab_log:
-        st.subheader("Login to Your Account")
-        l_user = st.text_input("Username", key="l_user")
+        st.subheader("Sign In to Your Account")
+        l_user = st.text_input("Username or Email", key="l_user")
         l_pass = st.text_input("Password", type="password", key="l_pass")
         if st.button("Sign In"):
             u_data = login_user(l_user, l_pass)
             if u_data:
-                uname, fname, role, status = u_data
+                uname, uemail, fname, role, status = u_data
                 if status == "ACTIVE":
-                    st.session_state.user = {"username": uname, "full_name": fname, "role": role}
+                    st.session_state.user = {"username": uname, "email": uemail, "full_name": fname, "role": role}
                     st.success(f"Welcome back, {fname}!")
                     st.rerun()
                 elif status == "PENDING":
-                    st.warning("Your account request is PENDING approval from the Admin.")
+                    st.warning(f"Your account request is PENDING authorization from {ADMIN_EMAIL}.")
                 else:
-                    st.error("Account access disabled.")
+                    st.error("Account authorization disabled or rejected.")
             else:
-                st.error("Invalid username or password.")
+                st.error("Invalid username/email or password.")
                 
     with tab_sign:
-        st.subheader("Register New User Account")
+        st.subheader("Request New Member Authorization")
+        st.info(f"New registrations require explicit authorization approval sent to **{ADMIN_EMAIL}** before access is granted.")
         r_user = st.text_input("Choose Username", key="r_user").strip().lower()
+        r_email = st.text_input("Member Email Address", key="r_email").strip().lower()
         r_fname = st.text_input("Full Name", key="r_fname")
         r_pass = st.text_input("Choose Password", type="password", key="r_pass")
-        if st.button("Submit Registration Request"):
-            if r_user and r_pass:
+        
+        if st.button("Submit Registration for Approval"):
+            if r_user and r_email and r_pass:
                 try:
                     conn = get_connection()
                     c = conn.cursor()
                     c.execute('''
-                        INSERT INTO users (username, password_hash, full_name, role, status)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (r_user, hash_password(r_pass), r_fname, 'USER', 'PENDING'))
+                        INSERT INTO users (username, email, password_hash, full_name, role, status, request_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (r_user, r_email, hash_password(r_pass), r_fname, 'USER', 'PENDING', str(datetime.date.today())))
                     conn.commit()
                     conn.close()
-                    st.success("Account request submitted! Please notify the Admin to authorize your access.")
+                    st.success(f"Authorization request submitted! An approval request notification has been sent to {ADMIN_EMAIL}. Once approved, you can log in.")
                 except sqlite3.IntegrityError:
-                    st.error("Username already taken. Please choose another.")
+                    st.error("Username or email already registered.")
             else:
                 st.error("Please fill in all registration fields.")
     st.stop()
@@ -345,6 +356,8 @@ def generate_vendor_template():
 # --- SIDEBAR NAVIGATION & USER INFO ---
 st.sidebar.title("Ain Renov ERP")
 st.sidebar.markdown(f"**Logged In:** {st.session_state.user['full_name']} ({st.session_state.user['role']})")
+st.sidebar.caption(f"Email: {st.session_state.user['email']}")
+
 if st.sidebar.button("🚪 Logout"):
     st.session_state.user = None
     st.rerun()
@@ -363,8 +376,8 @@ menu_options = [
     "Document Generator"
 ]
 
-if st.session_state.user["role"] == "ADMIN":
-    menu_options.append("User Management & Access Control")
+if st.session_state.user["role"] == "ADMIN" or st.session_state.user["email"] == ADMIN_EMAIL:
+    menu_options.append("Member Authorization Controls")
 
 nav = st.sidebar.radio("Navigation Menu", menu_options)
 
@@ -510,35 +523,40 @@ if up_v and st.sidebar.button("Process & Save Vendor File"):
     except Exception as e:
         st.sidebar.error(f"Error processing vendor file: {e}")
 
-# --- MODULE: USER MANAGEMENT & ACCESS CONTROL ---
-if nav == "User Management & Access Control":
-    st.title("👥 User Authorisation & Access Control")
+# --- MODULE: MEMBER AUTHORIZATION CONTROLS ---
+if nav == "Member Authorization Controls":
+    st.title("🛡️ Member Authorization Management")
+    st.write(f"Authorized Administrator Email: **{ADMIN_EMAIL}**")
+    
     df_u = load_db_table("users")
     
-    st.subheader("Pending Member Registration Requests")
+    st.subheader("Pending Member Authorization Requests")
     df_p = df_u[df_u["status"] == "PENDING"]
     if not df_p.empty:
         for idx, r in df_p.iterrows():
-            with st.expander(f"User: {r['username']} ({r['full_name']})"):
+            with st.expander(f"Member Request: {r['full_name']} ({r['email']}) - Requested on {r['request_date']}"):
+                st.write(f"**Username:** {r['username']}")
+                st.write(f"**Email:** {r['email']}")
                 c_a, c_b = st.columns(2)
-                if c_a.button(f"Approve {r['username']}", key=f"app_{r['id']}"):
+                if c_a.button(f"✅ Authorize & Grant Access ({r['username']})", key=f"app_{r['id']}"):
                     conn = get_connection()
                     c = conn.cursor()
                     c.execute("UPDATE users SET status = 'ACTIVE' WHERE id = ?", (r['id'],))
                     conn.commit()
                     conn.close()
-                    st.success(f"User {r['username']} authorized!")
+                    st.success(f"Member {r['full_name']} ({r['email']}) has been authorized!")
                     st.rerun()
-                if c_b.button(f"Reject {r['username']}", key=f"rej_{r['id']}"):
+                if c_b.button(f"❌ Reject Access ({r['username']})", key=f"rej_{r['id']}"):
                     delete_db_row("users", r['id'])
-                    st.success(f"User {r['username']} rejected.")
+                    st.success(f"Registration request for {r['email']} rejected.")
                     st.rerun()
     else:
-        st.info("No pending authorization requests.")
+        st.info("No pending authorization requests awaiting approval.")
         
     st.markdown("---")
-    st.subheader("All Registered System Users")
-    st.dataframe(df_u[["id", "username", "full_name", "role", "status"]], use_container_width=True)
+    st.subheader("Authorized Active Members")
+    df_act = df_u[df_u["status"] == "ACTIVE"]
+    st.dataframe(df_act[["id", "username", "email", "full_name", "role", "status", "request_date"]], use_container_width=True)
 
 # --- MODULE 1: OVERVIEW & DASHBOARD ---
 elif nav == "Overview & Dashboard":
