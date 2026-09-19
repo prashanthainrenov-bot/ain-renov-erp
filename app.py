@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import datetime
+import os
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -12,7 +13,7 @@ st.set_page_config(
 
 DB_FILE = "financials.db"
 
-# --- DATABASE INITIALIZATION ---
+# --- DATABASE INITIALIZATION & PERSISTENCE ---
 def get_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
@@ -20,7 +21,7 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
     
-    # Financial Transactions Table
+    # 1. Main Financial Transactions Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +45,7 @@ def init_db():
         )
     """)
     
-    # Quotation Tracker Table
+    # 2. Quotation Tracker Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS quotations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +60,7 @@ def init_db():
         )
     """)
 
-    # Staff Salaries Table
+    # 3. Staff Salary Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS staff_salaries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +76,7 @@ def init_db():
         )
     """)
 
-    # Petty Cash Table
+    # 4. Petty Cash Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS petty_cash (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,7 +90,7 @@ def init_db():
         )
     """)
 
-    # Vendor & Client Payments Table
+    # 5. Vendor & Client Payments Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vendor_client_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,7 +111,7 @@ def init_db():
 
 init_db()
 
-# --- CATEGORIES & AI RULE ENGINE FOR SORTING ---
+# --- CATEGORY DEFINITIONS & AI RULE ENGINE ---
 CATEGORIES = [
     "Admin",
     "Licensing",
@@ -150,7 +151,7 @@ def auto_categorize(particulars, income_net, expense_net):
         return "Vehicle & Transport"
     if "courier" in text or "cargo" in text or "shipping" in text:
         return "Logistics"
-    if "food" in text or "restaurant" in text or "hotel" in text or "tea" in text:
+    if "food" in text or "restaurant" in text or "hotel" in text or "tea" in text or "hospitality" in text:
         return "Petty Cash & Client Hospitality"
     if "subcontractor" in text or "labour" in text or "labor" in text:
         return "Subcontractors"
@@ -174,7 +175,7 @@ def get_vat_quarter(date_obj):
         return f"{adj_year} Q4 (Dec-Feb)"
     return "Unknown"
 
-# --- DATABASE LOAD/DELETE HELPERS ---
+# --- DATABASE HELPERS ---
 def load_table(table_name):
     conn = get_connection()
     df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
@@ -207,7 +208,7 @@ upload_type = st.sidebar.selectbox(
     ["Financials Template", "Quotation Format", "Petty Cash Template", "Vendor/Client Template"]
 )
 
-# FIXED: Replaced invalid st.sidebar.file_to_uploader with st.sidebar.file_uploader
+# RECTIFIED: Correct Streamlit method name
 uploaded_file = st.sidebar.file_uploader(f"Upload {upload_type}", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
@@ -309,7 +310,7 @@ if uploaded_file is not None:
                     ))
 
             conn.commit()
-            st.sidebar.success("File processed and saved permanently to database!")
+            st.sidebar.success("Data imported and saved permanently to SQLite DB!")
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"Error processing file: {str(e)}")
@@ -331,7 +332,7 @@ tabs = st.tabs([
 # TAB 1: FINANCIALS & P&L
 # -----------------------------------------------------------------------------
 with tabs[0]:
-    st.header("Financial Overview & AI Categorization")
+    st.header("Financial Overview & AI Categorization Breakdown")
     df_tx = load_table("transactions")
     
     if not df_tx.empty:
@@ -346,7 +347,7 @@ with tabs[0]:
         col4.metric("Total Entries", len(df_tx))
 
         st.markdown("---")
-        selected_cat = st.selectbox("Filter by Sorted Category", ["All Categories"] + CATEGORIES)
+        selected_cat = st.selectbox("Filter by AI-Sorted Category", ["All Categories"] + CATEGORIES)
         if selected_cat != "All Categories":
             df_disp = df_tx[df_tx['category'] == selected_cat]
         else:
@@ -356,6 +357,14 @@ with tabs[0]:
             df_disp[['id', 'sl_no', 'date', 'invoice_number', 'particulars', 'payment_mode', 'is_petty_cash', 'is_cash', 'category', 'income_net', 'expense_net']],
             use_container_width=True
         )
+        
+        st.markdown("---")
+        st.subheader("Delete Individual Financial Transaction")
+        tx_del_id = st.number_input("Enter Transaction ID to Delete", min_value=1, step=1, key="tx_del")
+        if st.button("Delete Selected Transaction"):
+            delete_single_row("transactions", tx_del_id)
+            st.success(f"Transaction ID {tx_del_id} deleted successfully!")
+            st.rerun()
     else:
         st.info("No financial data found in database. Upload the Financials Template from the sidebar.")
 
@@ -363,7 +372,7 @@ with tabs[0]:
 # TAB 2: CORPORATE TAX & VAT
 # -----------------------------------------------------------------------------
 with tabs[1]:
-    st.header("Corporate Tax (Jan-Dec) & VAT Quarters (Starting 2024)")
+    st.header("Corporate Tax (Jan-Dec) & Custom VAT Quarters (Starting 2024)")
     df_tx = load_table("transactions")
     
     if not df_tx.empty:
@@ -371,7 +380,7 @@ with tabs[1]:
         df_tx['vat_quarter'] = df_tx['date_dt'].apply(get_vat_quarter)
         df_tx['year'] = df_tx['date_dt'].dt.year
         
-        st.subheader("1. YoY Corporate Tax Breakdown")
+        st.subheader("1. YoY Corporate Tax Breakdown (Jan to Dec)")
         ct_summary = df_tx.groupby('year').agg(
             Total_Income=('income_net', 'sum'),
             Total_Expense=('expense_net', 'sum'),
@@ -381,7 +390,7 @@ with tabs[1]:
         
         st.markdown("---")
         st.subheader("2. Quarter-on-Quarter VAT Statement")
-        st.caption("Quarters: Q1 (Mar-May), Q2 (Jun-Aug), Q3 (Sep-Nov), Q4 (Dec-Feb)")
+        st.caption("Custom Quarters: Q1 (Mar-May), Q2 (Jun-Aug), Q3 (Sep-Nov), Q4 (Dec-Feb)")
         
         vat_summary = df_tx.groupby('vat_quarter').agg(
             Output_VAT_Income=('income_vat', 'sum'),
@@ -390,7 +399,7 @@ with tabs[1]:
         ).reset_index()
         st.dataframe(vat_summary, use_container_width=True)
     else:
-        st.info("No transaction records available for tax reporting.")
+        st.info("No transaction records available for tax calculation.")
 
 # -----------------------------------------------------------------------------
 # TAB 3: QUOTATION TRACKER
@@ -428,14 +437,14 @@ with tabs[2]:
         st.dataframe(df_q, use_container_width=True)
         
         st.markdown("---")
-        st.subheader("Delete Specific Quotation Entry")
-        q_del_id = st.number_input("Enter Quotation ID to Delete", min_value=1, step=1)
+        st.subheader("Delete Specific Quotation Record")
+        q_del_id = st.number_input("Enter Quotation ID to Delete", min_value=1, step=1, key="q_del")
         if st.button("Delete Quotation Entry"):
             delete_single_row("quotations", q_del_id)
             st.success(f"Quotation ID {q_del_id} deleted successfully!")
             st.rerun()
     else:
-        st.info("No quotation records stored.")
+        st.info("No quotation records stored in database.")
 
 # -----------------------------------------------------------------------------
 # TAB 4: STAFF SALARIES
@@ -446,7 +455,7 @@ with tabs[3]:
     df_tx = load_table("transactions")
     salaries_from_tx = df_tx[df_tx['category'] == 'Salaries'] if not df_tx.empty else pd.DataFrame()
     
-    st.subheader("1. Salary Expenses Populated from Financial Ledger")
+    st.subheader("1. Salary Expenses Auto-Populated from Financial Ledger")
     if not salaries_from_tx.empty:
         st.dataframe(salaries_from_tx[['date', 'particulars', 'expense_net', 'payment_mode']], use_container_width=True)
     else:
@@ -467,7 +476,7 @@ with tabs[3]:
             pay_date = s_col1.date_input("Payment Date", datetime.date.today())
             rem = s_col2.text_input("Remarks")
             
-            sub_sal = st.form_submit_button("Save Salary Entry")
+            sub_sal = st.form_submit_button("Save Salary Record")
             if sub_sal:
                 outstanding = (base_sal + allowance - deductions) - paid_amt
                 conn = get_connection()
@@ -478,7 +487,7 @@ with tabs[3]:
                 """, (emp_name, m_year, base_sal, allowance, deductions, paid_amt, outstanding, str(pay_date), rem))
                 conn.commit()
                 conn.close()
-                st.success("Salary entry saved!")
+                st.success("Salary record saved!")
                 st.rerun()
 
     df_sal = load_table("staff_salaries")
@@ -531,6 +540,7 @@ with tabs[4]:
     if not df_pc.empty:
         st.dataframe(df_pc, use_container_width=True)
         
+        st.markdown("---")
         pc_del_id = st.number_input("Enter Petty Cash Record ID to Delete", min_value=1, step=1, key="pc_del")
         if st.button("Delete Petty Cash Record"):
             delete_single_row("petty_cash", pc_del_id)
@@ -572,13 +582,13 @@ with tabs[5]:
 # -----------------------------------------------------------------------------
 with tabs[6]:
     st.header("⚙️ Action Zone: Permanent Data Controls")
-    st.warning("These actions alter or remove data stored in the SQLite database.")
+    st.warning("These actions permanently alter system records.")
     
     az_col1, az_col2 = st.columns(2)
     
     with az_col1:
-        st.subheader("1. Clear Category Financial Data")
-        cat_del = st.selectbox("Select Category to Delete", CATEGORIES, key="az_cat")
+        st.subheader("1. Clear Category-Specific Financial Data")
+        cat_del = st.selectbox("Select Category to Clear", CATEGORIES, key="az_cat")
         if st.button(f"Clear All '{cat_del}' Category Records"):
             clear_table("transactions", category=cat_del)
             st.success(f"Cleared all '{cat_del}' transaction entries.")
