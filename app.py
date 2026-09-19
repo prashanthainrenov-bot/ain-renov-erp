@@ -29,21 +29,27 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
     
-    # Users & Authentication Table
+    # 1. Users & Authentication Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE,
-            email TEXT,
             password_hash TEXT,
             full_name TEXT,
             role TEXT,
-            status TEXT,
-            request_date TEXT
+            status TEXT
         )
     ''')
 
-    # Financials Ledger
+    # SCHEMA MIGRATION: Ensure 'email' and 'request_date' columns exist in older DB files
+    c.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in c.fetchall()]
+    if "email" not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    if "request_date" not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN request_date TEXT")
+
+    # 2. Financials Ledger Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS financials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,7 +70,7 @@ def init_db():
         )
     ''')
     
-    # Projects Table
+    # 3. Projects Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,7 +84,7 @@ def init_db():
         )
     ''')
 
-    # Quotations Table
+    # 4. Quotations Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS quotations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,7 +100,7 @@ def init_db():
         )
     ''')
 
-    # Petty Cash Table
+    # 5. Petty Cash Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS petty_cash (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,7 +115,7 @@ def init_db():
         )
     ''')
 
-    # Salary Profiles Table
+    # 6. Salary Profiles Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS salary_profiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,7 +126,7 @@ def init_db():
         )
     ''')
 
-    # Client Payments Tracker
+    # 7. Client Payments Tracker
     c.execute('''
         CREATE TABLE IF NOT EXISTS client_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -136,7 +142,7 @@ def init_db():
         )
     ''')
 
-    # Vendor Payments Tracker & Ageing
+    # 8. Vendor Payments Tracker & Ageing
     c.execute('''
         CREATE TABLE IF NOT EXISTS vendor_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,12 +158,15 @@ def init_db():
     ''')
 
     # Seed Default Admin Account (Prashanth) if missing
-    c.execute("SELECT * FROM users WHERE email = ?", (ADMIN_EMAIL,))
+    c.execute("SELECT * FROM users WHERE email = ? OR username = 'prashanth'", (ADMIN_EMAIL,))
     if not c.fetchone():
         c.execute('''
             INSERT INTO users (username, email, password_hash, full_name, role, status, request_date)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', ('prashanth', ADMIN_EMAIL, hash_password('admin123'), 'Prashanth Kumar KV', 'ADMIN', 'ACTIVE', str(datetime.date.today())))
+    else:
+        # Update admin email if missing
+        c.execute("UPDATE users SET email = ?, role = 'ADMIN', status = 'ACTIVE' WHERE username = 'prashanth'", (ADMIN_EMAIL,))
     
     conn.commit()
     conn.close()
@@ -246,7 +255,7 @@ if st.session_state.user is None:
                     st.success(f"Welcome back, {fname}!")
                     st.rerun()
                 elif status == "PENDING":
-                    st.warning(f"Your account request is PENDING authorization from {ADMIN_EMAIL}.")
+                    st.warning(f"Your account request is PENDING authorization approval from {ADMIN_EMAIL}.")
                 else:
                     st.error("Account authorization disabled or rejected.")
             else:
@@ -254,7 +263,7 @@ if st.session_state.user is None:
                 
     with tab_sign:
         st.subheader("Request New Member Authorization")
-        st.info(f"New registrations require explicit authorization approval sent to **{ADMIN_EMAIL}** before access is granted.")
+        st.info(f"New registrations require explicit approval sent to **{ADMIN_EMAIL}** before system access is granted.")
         r_user = st.text_input("Choose Username", key="r_user").strip().lower()
         r_email = st.text_input("Member Email Address", key="r_email").strip().lower()
         r_fname = st.text_input("Full Name", key="r_fname")
@@ -271,7 +280,7 @@ if st.session_state.user is None:
                     ''', (r_user, r_email, hash_password(r_pass), r_fname, 'USER', 'PENDING', str(datetime.date.today())))
                     conn.commit()
                     conn.close()
-                    st.success(f"Authorization request submitted! An approval request notification has been sent to {ADMIN_EMAIL}. Once approved, you can log in.")
+                    st.success(f"Authorization request submitted! An approval request has been sent to {ADMIN_EMAIL}. Once authorized, you can log in.")
                 except sqlite3.IntegrityError:
                     st.error("Username or email already registered.")
             else:
