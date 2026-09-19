@@ -109,6 +109,20 @@ def init_db():
             status TEXT
         )
     ''')
+
+    # 7. Projects Master Table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_name TEXT,
+            client_name TEXT,
+            contract_value REAL,
+            start_date TEXT,
+            expected_completion TEXT,
+            status TEXT,
+            notes TEXT
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -151,6 +165,7 @@ menu = st.sidebar.radio(
         "Dashboard Overview",
         "P&L & Financial Statements",
         "VAT & Corporate Tax",
+        "Project Master & Analysis",
         "Quotation Tracker",
         "Staff Salary Tracker",
         "Petty Cash Management",
@@ -171,6 +186,16 @@ financial_tpl = pd.DataFrame({
     "trans_type": ["Income", "Expense"],
     "is_cash": [0, 1],
     "account_head": ["Sales", "Petty Cash"]
+})
+
+project_tpl = pd.DataFrame({
+    "project_name": ["Villa 45 Renovation", "Commercial HVAC Service"],
+    "client_name": ["Al Hashimi Corp", "Emaar Properties"],
+    "contract_value": [120000.0, 45000.0],
+    "start_date": ["2024-01-10", "2024-02-15"],
+    "expected_completion": ["2024-05-30", "2024-04-30"],
+    "status": ["In Progress", "In Progress"],
+    "notes": ["Phase 1 Completed", "Initial Inspection Done"]
 })
 
 quote_tpl = pd.DataFrame({
@@ -194,6 +219,7 @@ petty_tpl = pd.DataFrame({
 })
 
 st.sidebar.download_button("Financials Template", data=to_excel(financial_tpl), file_name="Financials_Template.xlsx")
+st.sidebar.download_button("Projects Template", data=to_excel(project_tpl), file_name="Projects_Template.xlsx")
 st.sidebar.download_button("Quotations Template", data=to_excel(quote_tpl), file_name="Quotations_Template.xlsx")
 st.sidebar.download_button("Petty Cash Template", data=to_excel(petty_tpl), file_name="Petty_Cash_Template.xlsx")
 
@@ -205,6 +231,7 @@ if menu == "Dashboard Overview":
     df_fin = pd.read_sql("SELECT * FROM financials", conn)
     df_quotes = pd.read_sql("SELECT * FROM quotations", conn)
     df_petty = pd.read_sql("SELECT * FROM petty_cash", conn)
+    df_proj = pd.read_sql("SELECT * FROM projects", conn)
     conn.close()
     
     col1, col2, col3, col4 = st.columns(4)
@@ -213,7 +240,7 @@ if menu == "Dashboard Overview":
     tot_exp = df_fin[df_fin['trans_type'] == 'Expense']['amount'].sum() if not df_fin.empty else 0.0
     net_profit = tot_inc - tot_exp
     
-    open_quotes = df_quotes[df_quotes['status'] == 'In Process']['amount'].sum() if not df_quotes.empty else 0.0
+    active_projects_count = len(df_proj[df_proj['status'] == 'In Progress']) if not df_proj.empty else 0
     
     petty_in = df_petty['cash_in'].sum() if not df_petty.empty else 0.0
     petty_out = df_petty['cash_out'].sum() if not df_petty.empty else 0.0
@@ -222,21 +249,24 @@ if menu == "Dashboard Overview":
     col1.metric("Total Revenue", f"AED {tot_inc:,.2f}")
     col2.metric("Total Expenses", f"AED {tot_exp:,.2f}")
     col3.metric("Net Profit", f"AED {net_profit:,.2f}")
-    col4.metric("Petty Cash Balance", f"AED {petty_bal:,.2f}")
+    col4.metric("Active Projects", f"{active_projects_count}")
     
     st.markdown("---")
     
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Active Quotation Pipeline")
-        st.metric("Pipeline Value (In Process)", f"AED {open_quotes:,.2f}")
-        if not df_quotes.empty:
-            st.dataframe(df_quotes[['client_name', 'project_name', 'amount', 'status', 'expected_closure_date']].tail(5), use_container_width=True)
+        st.subheader("Active Projects Overview")
+        if not df_proj.empty:
+            st.dataframe(df_proj[['project_name', 'client_name', 'contract_value', 'status', 'expected_completion']], use_container_width=True)
+        else:
+            st.info("No project records found.")
     
     with c2:
         st.subheader("Recent Cash Transactions")
         if not df_petty.empty:
             st.dataframe(df_petty[['entry_date', 'description', 'cash_in', 'cash_out', 'approved_by']].tail(5), use_container_width=True)
+        else:
+            st.info("No petty cash records found.")
 
 # --- 2. P&L & FINANCIAL STATEMENTS ---
 elif menu == "P&L & Financial Statements":
@@ -248,11 +278,7 @@ elif menu == "P&L & Financial Statements":
         uploaded_file = st.file_uploader("Choose Financial File", type=["xlsx", "csv"], key="fin_upload")
         if uploaded_file is not None:
             try:
-                if uploaded_file.name.endswith('.csv'):
-                    df_up = pd.read_csv(uploaded_file)
-                else:
-                    df_up = pd.read_excel(uploaded_file)
-                
+                df_up = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
                 df_up.columns = [c.lower().replace(" ", "_") for c in df_up.columns]
                 
                 for _, row in df_up.iterrows():
@@ -400,7 +426,106 @@ elif menu == "VAT & Corporate Tax":
         else:
             st.info("No transaction data available for Corporate Tax calculations.")
 
-# --- 4. QUOTATION TRACKER ---
+# --- 4. PROJECT MASTER & ANALYSIS ---
+elif menu == "Project Master & Analysis":
+    st.title("Project Master & Financial Analysis")
+    
+    conn = get_db_connection()
+    
+    with st.expander("Upload Project File (Excel/CSV)", expanded=False):
+        p_file = st.file_uploader("Upload Projects Template", type=["xlsx", "csv"], key="p_upload")
+        if p_file is not None:
+            try:
+                df_p = pd.read_excel(p_file) if p_file.name.endswith('.xlsx') else pd.read_csv(p_file)
+                df_p.columns = [c.lower().replace(" ", "_") for c in df_p.columns]
+                
+                for _, row in df_p.iterrows():
+                    conn.execute('''
+                        INSERT INTO projects (project_name, client_name, contract_value, start_date, expected_completion, status, notes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        str(row.get('project_name', '')),
+                        str(row.get('client_name', '')),
+                        float(row.get('contract_value', 0.0)),
+                        str(row.get('start_date', date.today())),
+                        str(row.get('expected_completion', date.today())),
+                        str(row.get('status', 'In Progress')),
+                        str(row.get('notes', ''))
+                    ))
+                conn.commit()
+                st.success("Projects batch uploaded successfully!")
+            except Exception as e:
+                st.error(f"Error uploading projects file: {e}")
+
+    with st.expander("Register New Project", expanded=False):
+        with st.form("add_project_form"):
+            pc1, pc2, pc3 = st.columns(3)
+            p_name = pc1.text_input("Project Name")
+            c_name = pc2.text_input("Client Name")
+            val = pc3.number_input("Contract Value (AED)", min_value=0.0, step=1000.0)
+            
+            pc4, pc5, pc6 = st.columns(3)
+            s_date = pc4.date_input("Start Date", date.today())
+            e_date = pc5.date_input("Expected Completion", date.today() + datetime.timedelta(days=90))
+            p_status = pc6.selectbox("Status", ["In Progress", "Completed", "On Hold", "Cancelled"])
+            
+            p_notes = st.text_area("Notes / Scope of Work")
+            
+            if st.form_submit_button("Save Project"):
+                conn.execute('''
+                    INSERT INTO projects (project_name, client_name, contract_value, start_date, expected_completion, status, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (p_name, c_name, val, str(s_date), str(e_date), p_status, p_notes))
+                conn.commit()
+                st.success("Project registered successfully!")
+                st.rerun()
+
+    df_proj = pd.read_sql("SELECT * FROM projects", conn)
+    
+    st.markdown("---")
+    st.subheader("Update Project Details & Status")
+    if not df_proj.empty:
+        p_id = st.selectbox(
+            "Select Project to Update",
+            df_proj['id'].tolist(),
+            format_func=lambda x: f"ID {x}: {df_proj.loc[df_proj['id']==x, 'project_name'].values[0]} ({df_proj.loc[df_proj['id']==x, 'client_name'].values[0]})"
+        )
+        
+        p_row = df_proj[df_proj['id'] == p_id].iloc[0]
+        
+        with st.form("update_p_form"):
+            up1, up2, up3 = st.columns(3)
+            u_p_status = up1.selectbox("Current Status", ["In Progress", "Completed", "On Hold", "Cancelled"], index=["In Progress", "Completed", "On Hold", "Cancelled"].index(p_row['status']) if p_row['status'] in ["In Progress", "Completed", "On Hold", "Cancelled"] else 0)
+            u_p_val = up2.number_input("Revised Contract Value (AED)", value=float(p_row['contract_value']))
+            u_e_date = up3.date_input("Target Completion Date", pd.to_datetime(p_row['expected_completion']).date() if p_row['expected_completion'] else date.today())
+            
+            u_p_notes = st.text_area("Update Notes / Scope", value=str(p_row['notes']))
+            
+            if st.form_submit_button("Update Project"):
+                conn.execute('''
+                    UPDATE projects 
+                    SET status = ?, contract_value = ?, expected_completion = ?, notes = ?
+                    WHERE id = ?
+                ''', (u_p_status, u_p_val, str(u_e_date), u_p_notes, p_id))
+                conn.commit()
+                st.success("Project record updated!")
+                st.rerun()
+                
+        st.subheader("Master Projects Ledger")
+        st.dataframe(df_proj, use_container_width=True)
+        
+        cp1, cp2 = st.columns(2)
+        cp1.download_button("Export Projects to Excel", data=to_excel(df_proj), file_name="Projects_Master.xlsx")
+        
+        if cp2.button("Clear All Projects Data", type="primary"):
+            conn.execute("DELETE FROM projects")
+            conn.commit()
+            st.rerun()
+    else:
+        st.info("No projects registered.")
+    conn.close()
+
+# --- 5. QUOTATION TRACKER ---
 elif menu == "Quotation Tracker":
     st.title("Quotation Pipeline & Follow-Up Tracker")
     
@@ -502,7 +627,7 @@ elif menu == "Quotation Tracker":
         st.info("No quotations found.")
     conn.close()
 
-# --- 5. STAFF SALARY TRACKER ---
+# --- 6. STAFF SALARY TRACKER ---
 elif menu == "Staff Salary Tracker":
     st.title("Staff Salary & Payroll Outstanding Tracker")
     
@@ -576,7 +701,7 @@ elif menu == "Staff Salary Tracker":
         st.info("No salary records created yet.")
     conn.close()
 
-# --- 6. PETTY CASH MANAGEMENT ---
+# --- 7. PETTY CASH MANAGEMENT ---
 elif menu == "Petty Cash Management":
     st.title("Petty Cash Register & Reconciliation")
     
@@ -665,9 +790,9 @@ elif menu == "Petty Cash Management":
         st.info("No petty cash logs available.")
     conn.close()
 
-# --- 7. CLIENT RECEIPTS & PROJECTS ---
+# --- 8. CLIENT RECEIPTS & PROJECTS ---
 elif menu == "Client Receipts & Projects":
-    st.title("Client Receipts & Project-Wise Analysis")
+    st.title("Client Receipts & Invoicing Tracker")
     
     conn = get_db_connection()
     
@@ -721,7 +846,7 @@ elif menu == "Client Receipts & Projects":
         st.info("No client payment entries recorded.")
     conn.close()
 
-# --- 8. VENDOR PAYMENTS & AGING ---
+# --- 9. VENDOR PAYMENTS & AGING ---
 elif menu == "Vendor Payments & Aging":
     st.title("Vendor Payment Tracker & Aging Analysis")
     
@@ -798,14 +923,14 @@ elif menu == "Vendor Payments & Aging":
         st.info("No vendor invoices logged.")
     conn.close()
 
-# --- 9. DATA BACKUP & TEMPLATES ---
+# --- 10. DATA BACKUP & TEMPLATES ---
 elif menu == "Data Backup & Templates":
     st.title("Data Backup & Maintenance")
     st.write("Download complete copies of your stored database tables below:")
     
     conn = get_db_connection()
     
-    tables = ["financials", "quotations", "salaries", "petty_cash", "vendor_payments", "client_payments"]
+    tables = ["financials", "projects", "quotations", "salaries", "petty_cash", "vendor_payments", "client_payments"]
     for tbl in tables:
         df_t = pd.read_sql(f"SELECT * FROM {tbl}", conn)
         st.download_button(
