@@ -29,14 +29,14 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS financials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sl_no INTEGER,
-            yes_no TEXT,
-            trans_date TEXT,
-            payment_date TEXT,
-            bill_no TEXT,
-            particulars TEXT,
-            payment_mode TEXT,
-            is_petty_cash TEXT,
+            sl_no INTEGER DEFAULT 0,
+            yes_no TEXT DEFAULT 'YES',
+            trans_date TEXT DEFAULT '',
+            payment_date TEXT DEFAULT '',
+            bill_no TEXT DEFAULT '',
+            particulars TEXT DEFAULT '',
+            payment_mode TEXT DEFAULT 'Bank Transfer',
+            is_petty_cash TEXT DEFAULT 'NO',
             income_amount REAL DEFAULT 0.0,
             income_vat REAL DEFAULT 0.0,
             income_net REAL DEFAULT 0.0,
@@ -44,19 +44,21 @@ def init_db():
             expense_vat REAL DEFAULT 0.0,
             expense_net REAL DEFAULT 0.0,
             amount REAL DEFAULT 0.0,
-            pnl_category TEXT
+            pnl_category TEXT DEFAULT 'General'
         )
     ''')
     
-    # Self-healing migration for existing databases missing columns
+    # Self-healing schema migration: Ensure all required columns exist
     c.execute("PRAGMA table_info(financials)")
-    cols = [row[1] for row in c.fetchall()]
+    existing_cols = [row[1] for row in c.fetchall()]
     
     required_cols = {
         "sl_no": "INTEGER DEFAULT 0",
         "yes_no": "TEXT DEFAULT 'YES'",
+        "trans_date": "TEXT DEFAULT ''",
         "payment_date": "TEXT DEFAULT ''",
         "bill_no": "TEXT DEFAULT ''",
+        "particulars": "TEXT DEFAULT ''",
         "payment_mode": "TEXT DEFAULT 'Bank Transfer'",
         "is_petty_cash": "TEXT DEFAULT 'NO'",
         "income_amount": "REAL DEFAULT 0.0",
@@ -70,7 +72,7 @@ def init_db():
     }
     
     for col_name, col_type in required_cols.items():
-        if col_name not in cols:
+        if col_name not in existing_cols:
             c.execute(f"ALTER TABLE financials ADD COLUMN {col_name} {col_type}")
 
     # 2. Quotation Tracker Table
@@ -361,8 +363,13 @@ elif menu == "P&L & Financial Statements":
                 for idx, row in df_up.iterrows():
                     sl_no = row.get(c_map.get('SL NO', 'SL NO'), idx + 1)
                     yes_no = str(row.get(c_map.get('YES/NO', 'YES/NO'), 'YES'))
-                    t_date = str(row.get(c_map.get('DATE', 'DATE'), str(date.today())))
-                    p_date = str(row.get(c_map.get('PAYMENT DATE', 'PAYMENT DATE'), ''))
+                    
+                    t_date_val = row.get(c_map.get('DATE', 'DATE'), str(date.today()))
+                    t_date = str(t_date_val) if pd.notna(t_date_val) else str(date.today())
+                    
+                    p_date_val = row.get(c_map.get('PAYMENT DATE', 'PAYMENT DATE'), '')
+                    p_date = str(p_date_val) if pd.notna(p_date_val) else ''
+                    
                     bill_no = str(row.get(c_map.get('BILL/ INVOICE NUMBER', 'BILL/ INVOICE NUMBER'), ''))
                     particulars = str(row.get(c_map.get('PARTICULARS', 'PARTICULARS'), ''))
                     pmode = str(row.get(c_map.get('PAYMENT MODE (CASH/BANK)', 'PAYMENT MODE (CASH/BANK)'), 'Bank Transfer'))
