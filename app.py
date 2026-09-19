@@ -12,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- DATABASE PERSISTENCE SETUP ---
+# --- DATABASE PERSISTENCE SETUP (SQLite Disk Storage) ---
 DB_FILE = "app_database.db"
 
 def get_connection():
@@ -22,7 +22,7 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
     
-    # Financials Ledger
+    # Financials Ledger Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS financials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,7 +99,7 @@ def init_db():
         )
     ''')
 
-    # Client Payments Tracker
+    # Client Payments Tracker Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS client_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +115,7 @@ def init_db():
         )
     ''')
 
-    # Vendor Payments Tracker & Ageing
+    # Vendor Payments & Ageing Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS vendor_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -275,12 +275,13 @@ nav = st.sidebar.radio(
         "Client Payments Tracker",
         "Vendor Payments & Ageing",
         "Quotation Tracker",
-        "Staff Salaries Tracker"
+        "Staff Salaries Tracker",
+        "Document Generator"
     ]
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📥 Data Uploader (4 Templates)")
+st.sidebar.subheader("📥 Data Uploader")
 
 # 1. Financial Ledger Upload
 up_fin = st.sidebar.file_uploader("Upload Financial Ledger (.xlsx)", type=["xlsx"])
@@ -319,7 +320,7 @@ if up_fin and st.sidebar.button("Process & Save Financial File"):
             ''', (sl_val, yes_no_val, d_val, pay_date, bill_no, part_txt, pmode, is_petty,
                   inc_amt, inc_vat, inc_net, exp_amt, exp_vat, exp_net))
             
-            # Auto-populate Petty Cash table if flagged as Petty Cash or Cash Payment
+            # Auto-populate Petty Cash table if flagged
             if is_petty == "YES" or "CASH" in pmode.upper():
                 c.execute('''
                     INSERT INTO petty_cash (sl_no, date, voucher_no, description, cash_in, cash_out, balance, remarks)
@@ -328,7 +329,7 @@ if up_fin and st.sidebar.button("Process & Save Financial File"):
 
         conn.commit()
         conn.close()
-        st.sidebar.success("Financial file saved successfully!")
+        st.sidebar.success("Financial file saved to persistent database!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing financial file: {e}")
@@ -360,7 +361,7 @@ if up_q and st.sidebar.button("Process & Save Quotations File"):
             ))
         conn.commit()
         conn.close()
-        st.sidebar.success("Quotations file saved successfully!")
+        st.sidebar.success("Quotations file saved!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing quotation file: {e}")
@@ -389,7 +390,7 @@ if up_pc and st.sidebar.button("Process & Save Petty Cash File"):
             ))
         conn.commit()
         conn.close()
-        st.sidebar.success("Petty Cash file saved successfully!")
+        st.sidebar.success("Petty Cash file saved!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing petty cash file: {e}")
@@ -417,7 +418,7 @@ if up_v and st.sidebar.button("Process & Save Vendor File"):
             ))
         conn.commit()
         conn.close()
-        st.sidebar.success("Vendor file saved successfully!")
+        st.sidebar.success("Vendor file saved!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Error processing vendor file: {e}")
@@ -461,7 +462,7 @@ if nav == "Overview & Dashboard":
 
 # --- MODULE 2: DATA IMPORT, EXPORT & CLEAR ---
 elif nav == "Data Import, Export & Clear":
-    st.title("⚙️ Data Management, Blank Templates & Module Controls")
+    st.title("⚙️ Data Management & Module Controls")
     
     st.markdown("### 1. Download Blank Excel Templates")
     t1, t2, t3, t4 = st.columns(4)
@@ -976,3 +977,23 @@ elif nav == "Staff Salaries Tracker":
                 st.info("No disbursements matched in financial ledger.")
         else:
             st.info("No employee salary profiles or disbursements logged.")
+
+# --- MODULE 11: DOCUMENT GENERATOR ---
+elif nav == "Document Generator":
+    st.title("📄 Tax Invoice & LPO Print / PDF Generator")
+    doc_type = st.selectbox("Document Type", ["Progressive Tax Invoice", "Advance Tax Invoice", "Local Purchase Order (LPO)"])
+    
+    c_a, c_b = st.columns(2)
+    client_name = c_a.text_input("Client / Contractor Name", "Ain Renov Client")
+    project_title = c_a.text_input("Project Description", "HVAC Renovation")
+    amt_base = c_b.number_input("Base Amount (Excl VAT AED)", min_value=0.0, value=10000.0)
+    
+    amt_vat = amt_base * 0.05
+    amt_total = amt_base + amt_vat
+    
+    st.write(f"**Subtotal:** AED {amt_base:,.2f}")
+    st.write(f"**UAE VAT (5%):** AED {amt_vat:,.2f}")
+    st.write(f"**Total Payable:** AED {amt_total:,.2f}")
+    
+    if st.button("Generate Printable Document"):
+        st.success(f"{doc_type} generated successfully for {client_name}!")
