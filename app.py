@@ -2,72 +2,15 @@ import io
 import re
 import datetime
 import sqlite3
-import hashlib
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import pandas as pd
 import streamlit as st
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Ain Renov ERP - Web Financials & Access Control",
+    page_title="Ain Renov ERP - Financials & Operations",
     page_icon="🏢",
     layout="wide"
 )
-
-# --- AUTHORIZATION ADMIN EMAIL ---
-ADMIN_EMAIL = "prashanthainrenov@gmail.com"
-
-# --- EMAIL SENDER CONFIGURATION ---
-def send_authorization_email(applicant_name, applicant_email, applicant_user):
-    """
-    Sends an immediate authorization request email to prashanthainrenov@gmail.com
-    using Streamlit Secrets (st.secrets["smtp"]) or fallback configuration.
-    """
-    try:
-        # Retrieve credentials from Streamlit Secrets if configured
-        smtp_server = st.secrets.get("smtp", {}).get("server", "smtp.gmail.com")
-        smtp_port = int(st.secrets.get("smtp", {}).get("port", 587))
-        sender_email = st.secrets.get("smtp", {}).get("sender_email", ADMIN_EMAIL)
-        sender_password = st.secrets.get("smtp", {}).get("sender_password", "")
-
-        subject = f"🚨 ERP Access Authorization Required: {applicant_name}"
-        body = f"""
-Dear Prashanth,
-
-A new user has requested access to the Ain Renov Technical Services ERP System.
-
-Applicant Details:
-------------------
-Full Name: {applicant_name}
-Username: {applicant_user}
-Email Address: {applicant_email}
-Request Date: {datetime.date.today()}
-
-Please log in to your Ain Renov ERP Admin Dashboard to approve or reject this request under "Member Authorization Controls".
-
-Admin Portal: https://ain-renov-erp.streamlit.app
-        """
-
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['To'] = ADMIN_EMAIL
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
-
-        if sender_password:
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            server.starttls()
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, ADMIN_EMAIL, msg.as_string())
-            server.quit()
-            return True
-        else:
-            return False
-    except Exception as e:
-        print(f"Email notification error: {e}")
-        return False
 
 # --- DATABASE PERSISTENCE SETUP ---
 DB_FILE = "app_database.db"
@@ -75,34 +18,11 @@ DB_FILE = "app_database.db"
 def get_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
-def hash_password(password):
-    return hashlib.sha256(str(password).encode()).hexdigest()
-
 def init_db():
     conn = get_connection()
     c = conn.cursor()
     
-    # 1. Users & Authentication Table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            password_hash TEXT,
-            full_name TEXT,
-            role TEXT,
-            status TEXT
-        )
-    ''')
-
-    # SAFE SCHEMA MIGRATION: Dynamically inspect columns to prevent OperationalError
-    c.execute("PRAGMA table_info(users)")
-    columns = [column[1] for column in c.fetchall()]
-    if "email" not in columns:
-        c.execute("ALTER TABLE users ADD COLUMN email TEXT")
-    if "request_date" not in columns:
-        c.execute("ALTER TABLE users ADD COLUMN request_date TEXT")
-
-    # 2. Financials Ledger Table
+    # 1. Financials Ledger Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS financials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,7 +43,7 @@ def init_db():
         )
     ''')
     
-    # 3. Projects Table
+    # 2. Projects Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,7 +57,7 @@ def init_db():
         )
     ''')
 
-    # 4. Quotations Table
+    # 3. Quotations Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS quotations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,7 +73,7 @@ def init_db():
         )
     ''')
 
-    # 5. Petty Cash Table
+    # 4. Petty Cash Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS petty_cash (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -168,7 +88,7 @@ def init_db():
         )
     ''')
 
-    # 6. Salary Profiles Table
+    # 5. Salary Profiles Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS salary_profiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,7 +99,7 @@ def init_db():
         )
     ''')
 
-    # 7. Client Payments Tracker
+    # 6. Client Payments Tracker
     c.execute('''
         CREATE TABLE IF NOT EXISTS client_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -195,7 +115,7 @@ def init_db():
         )
     ''')
 
-    # 8. Vendor Payments Tracker & Ageing
+    # 7. Vendor Payments Tracker & Ageing
     c.execute('''
         CREATE TABLE IF NOT EXISTS vendor_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -210,16 +130,6 @@ def init_db():
         )
     ''')
 
-    # Seed Default Admin Account (Prashanth) if missing
-    c.execute("SELECT * FROM users WHERE email = ? OR username = 'prashanth'", (ADMIN_EMAIL,))
-    if not c.fetchone():
-        c.execute('''
-            INSERT INTO users (username, email, password_hash, full_name, role, status, request_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', ('prashanth', ADMIN_EMAIL, hash_password('admin123'), 'Prashanth Kumar KV', 'ADMIN', 'ACTIVE', str(datetime.date.today())))
-    else:
-        c.execute("UPDATE users SET email = ?, role = 'ADMIN', status = 'ACTIVE' WHERE username = 'prashanth'", (ADMIN_EMAIL,))
-    
     conn.commit()
     conn.close()
 
@@ -273,77 +183,6 @@ def convert_df_to_excel(df):
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Data')
     return buffer.getvalue()
-
-# --- AUTHENTICATION MODULE ---
-if "user" not in st.session_state:
-    st.session_state.user = None
-
-def login_user(username_or_email, password):
-    conn = get_connection()
-    c = conn.cursor()
-    p_hash = hash_password(password)
-    c.execute('''
-        SELECT username, email, full_name, role, status FROM users 
-        WHERE (username = ? OR email = ?) AND password_hash = ?
-    ''', (username_or_email, username_or_email, p_hash))
-    user_rec = c.fetchone()
-    conn.close()
-    return user_rec
-
-if st.session_state.user is None:
-    st.title("🔒 Ain Renov ERP - Secure Web Access")
-    tab_log, tab_sign = st.tabs(["🔑 Sign In", "📝 Request Authorization for New Member"])
-    
-    with tab_log:
-        st.subheader("Sign In to Your Account")
-        l_user = st.text_input("Username or Email", key="l_user")
-        l_pass = st.text_input("Password", type="password", key="l_pass")
-        if st.button("Sign In"):
-            u_data = login_user(l_user, l_pass)
-            if u_data:
-                uname, uemail, fname, role, status = u_data
-                if status == "ACTIVE":
-                    st.session_state.user = {"username": uname, "email": uemail, "full_name": fname, "role": role}
-                    st.success(f"Welcome back, {fname}!")
-                    st.rerun()
-                elif status == "PENDING":
-                    st.warning(f"Your account request is PENDING authorization approval from {ADMIN_EMAIL}.")
-                else:
-                    st.error("Account authorization disabled or rejected.")
-            else:
-                st.error("Invalid username/email or password.")
-                
-    with tab_sign:
-        st.subheader("Request New Member Authorization")
-        st.info(f"New registrations trigger an authorization request to **{ADMIN_EMAIL}** before access is granted.")
-        r_user = st.text_input("Choose Username", key="r_user").strip().lower()
-        r_email = st.text_input("Member Email Address", key="r_email").strip().lower()
-        r_fname = st.text_input("Full Name", key="r_fname")
-        r_pass = st.text_input("Choose Password", type="password", key="r_pass")
-        
-        if st.button("Submit Registration for Approval"):
-            if r_user and r_email and r_pass:
-                try:
-                    conn = get_connection()
-                    c = conn.cursor()
-                    c.execute('''
-                        INSERT INTO users (username, email, password_hash, full_name, role, status, request_date)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (r_user, r_email, hash_password(r_pass), r_fname, 'USER', 'PENDING', str(datetime.date.today())))
-                    conn.commit()
-                    conn.close()
-                    
-                    # Dispatch Email
-                    email_sent = send_authorization_email(r_fname, r_email, r_user)
-                    if email_sent:
-                        st.success(f"Authorization email sent to {ADMIN_EMAIL}! You will be able to log in once approved.")
-                    else:
-                        st.success(f"Authorization request registered for {ADMIN_EMAIL}! (Pending Admin in-app approval).")
-                except sqlite3.IntegrityError:
-                    st.error("Username or email already registered.")
-            else:
-                st.error("Please fill in all registration fields.")
-    st.stop()
 
 # --- TEMPLATE GENERATORS ---
 def generate_financial_template():
@@ -420,33 +259,26 @@ def generate_vendor_template():
     }])
     return convert_df_to_excel(df_temp)
 
-# --- SIDEBAR NAVIGATION & USER INFO ---
+# --- SIDEBAR NAVIGATION ---
 st.sidebar.title("Ain Renov ERP")
-st.sidebar.markdown(f"**Logged In:** {st.session_state.user['full_name']} ({st.session_state.user['role']})")
-st.sidebar.caption(f"Email: {st.session_state.user['email']}")
+st.sidebar.subheader("Dubai, UAE (Web ERP)")
 
-if st.sidebar.button("🚪 Logout"):
-    st.session_state.user = None
-    st.rerun()
-
-menu_options = [
-    "Overview & Dashboard",
-    "Data Import, Export & Clear",
-    "P&L (YoY Analysis)",
-    "VAT & Corporate Tax Returns",
-    "Petty Cash Ledger",
-    "Project-Wise Analysis",
-    "Client Payments Tracker",
-    "Vendor Payments & Ageing",
-    "Quotation Tracker",
-    "Staff Salaries Tracker",
-    "Document Generator"
-]
-
-if st.session_state.user["role"] == "ADMIN" or st.session_state.user["email"] == ADMIN_EMAIL:
-    menu_options.append("Member Authorization Controls")
-
-nav = st.sidebar.radio("Navigation Menu", menu_options)
+nav = st.sidebar.radio(
+    "Navigation Menu",
+    [
+        "Overview & Dashboard",
+        "Data Import, Export & Clear",
+        "P&L (YoY Analysis)",
+        "VAT & Corporate Tax Returns",
+        "Petty Cash Ledger",
+        "Project-Wise Analysis",
+        "Client Payments Tracker",
+        "Vendor Payments & Ageing",
+        "Quotation Tracker",
+        "Staff Salaries Tracker",
+        "Document Generator"
+    ]
+)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📥 Web Data Uploaders")
@@ -590,43 +422,8 @@ if up_v and st.sidebar.button("Process & Save Vendor File"):
     except Exception as e:
         st.sidebar.error(f"Error processing vendor file: {e}")
 
-# --- MODULE: MEMBER AUTHORIZATION CONTROLS ---
-if nav == "Member Authorization Controls":
-    st.title("🛡️ Member Authorization Management")
-    st.write(f"Authorized Administrator Email: **{ADMIN_EMAIL}**")
-    
-    df_u = load_db_table("users")
-    
-    st.subheader("Pending Member Authorization Requests")
-    df_p = df_u[df_u["status"] == "PENDING"]
-    if not df_p.empty:
-        for idx, r in df_p.iterrows():
-            with st.expander(f"Member Request: {r['full_name']} ({r['email']}) - Requested on {r['request_date']}"):
-                st.write(f"**Username:** {r['username']}")
-                st.write(f"**Email:** {r['email']}")
-                c_a, c_b = st.columns(2)
-                if c_a.button(f"✅ Authorize & Grant Access ({r['username']})", key=f"app_{r['id']}"):
-                    conn = get_connection()
-                    c = conn.cursor()
-                    c.execute("UPDATE users SET status = 'ACTIVE' WHERE id = ?", (r['id'],))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"Member {r['full_name']} ({r['email']}) has been authorized!")
-                    st.rerun()
-                if c_b.button(f"❌ Reject Access ({r['username']})", key=f"rej_{r['id']}"):
-                    delete_db_row("users", r['id'])
-                    st.success(f"Registration request for {r['email']} rejected.")
-                    st.rerun()
-    else:
-        st.info("No pending authorization requests awaiting approval.")
-        
-    st.markdown("---")
-    st.subheader("Authorized Active Members")
-    df_act = df_u[df_u["status"] == "ACTIVE"]
-    st.dataframe(df_act[["id", "username", "email", "full_name", "role", "status", "request_date"]], use_container_width=True)
-
 # --- MODULE 1: OVERVIEW & DASHBOARD ---
-elif nav == "Overview & Dashboard":
+if nav == "Overview & Dashboard":
     st.title("🌐 Financial Summary & Operations Dashboard")
     
     df_fin = load_db_table("financials")
