@@ -225,7 +225,7 @@ st.sidebar.markdown("---")
 
 upload_type = st.sidebar.selectbox(
     "Select Template to Upload",
-    ["Financials Template", "Quotation Format", "Petty Cash Template", "Vendor/Client Template"]
+    ["Financials Template", "Quotation Format", "Staff Salaries Template", "Petty Cash Template", "Vendor/Client Template"]
 )
 
 uploaded_file = st.sidebar.file_uploader(f"Upload {upload_type}", type=["xlsx", "xls", "csv"])
@@ -289,6 +289,32 @@ if uploaded_file is not None:
                         str(row.get('Status', 'In Process')),
                         str(row.get('Feedback', '')),
                         str(row.get('Reminder Date', '')).split()[0]
+                    ))
+
+            elif upload_type == "Staff Salaries Template":
+                df_sal_up = pd.read_excel(uploaded_file)
+                for _, row in df_sal_up.iterrows():
+                    base = float(row.get('Base Salary', 0.0))
+                    allow = float(row.get('Allowances', 0.0))
+                    ded = float(row.get('Deductions', 0.0))
+                    paid = float(row.get('Net Paid Amount', 0.0))
+                    out = (base + allow - ded) - paid
+                    
+                    cursor.execute("""
+                        INSERT INTO staff_salaries (
+                            employee_name, month_year, base_salary, allowance, deductions,
+                            net_paid, outstanding, payment_date, remarks
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(row.get('Employee Name', '')),
+                        str(row.get('Month/Year', '')),
+                        base,
+                        allow,
+                        ded,
+                        paid,
+                        out,
+                        str(row.get('Payment Date', '')).split()[0],
+                        str(row.get('Remarks', ''))
                     ))
 
             elif upload_type == "Petty Cash Template":
@@ -484,21 +510,21 @@ with tabs[2]:
 # TAB 4: STAFF SALARIES
 # -----------------------------------------------------------------------------
 with tabs[3]:
-    st.header("👥 Staff Salaries & Outstanding Balances")
+    st.header("👥 Staff Salaries & Employee-Wise Payroll Reports")
     
     df_tx = load_table("transactions")
     salaries_from_tx = df_tx[df_tx['category'] == 'Salaries'] if not df_tx.empty else pd.DataFrame()
     
-    st.subheader("1. Salary Expenses Auto-Populated from Financial Ledger")
+    st.subheader("1. General Salary Expenses Auto-Populated from Main Financial Ledger")
     if not salaries_from_tx.empty:
         st.dataframe(salaries_from_tx[['date', 'particulars', 'expense_net', 'payment_mode']], use_container_width=True)
     else:
         st.info("No salary transactions detected in main financial ledger.")
         
     st.markdown("---")
-    st.subheader("2. Individual Staff Salary Ledger")
+    st.subheader("2. Employee-Wise Salary Ledger")
     
-    with st.expander("➕ Add / Adjust Individual Salary Entry"):
+    with st.expander("➕ Add / Adjust Individual Employee Salary Record"):
         with st.form("salary_form"):
             s_col1, s_col2 = st.columns(2)
             emp_name = s_col1.text_input("Employee Name")
@@ -526,8 +552,17 @@ with tabs[3]:
 
     df_sal = load_table("staff_salaries")
     if not df_sal.empty:
-        emp_filter = st.selectbox("Select Employee to View History", ["All Staff"] + df_sal['employee_name'].unique().tolist())
-        df_sal_disp = df_sal if emp_filter == "All Staff" else df_sal[df_sal['employee_name'] == emp_filter]
+        emp_list = df_sal['employee_name'].dropna().unique().tolist()
+        emp_filter = st.selectbox("Select Employee to View Salary Breakdown & History", ["All Employees"] + emp_list)
+        
+        df_sal_disp = df_sal if emp_filter == "All Employees" else df_sal[df_sal['employee_name'] == emp_filter]
+        
+        # Summary Metrics
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Net Paid", f"{df_sal_disp['net_paid'].sum():,.2f} AED")
+        m2.metric("Total Outstanding", f"{df_sal_disp['outstanding'].sum():,.2f} AED")
+        m3.metric("Total Records", len(df_sal_disp))
+        
         st.dataframe(df_sal_disp, use_container_width=True)
         
         st.markdown("---")
@@ -536,6 +571,8 @@ with tabs[3]:
             delete_single_row("staff_salaries", sal_del_id)
             st.success(f"Salary Record ID {sal_del_id} deleted!")
             st.rerun()
+    else:
+        st.info("No employee salary records stored in database. Upload via sidebar or enter entries manually.")
 
 # -----------------------------------------------------------------------------
 # TAB 5: PETTY CASH LEDGER
