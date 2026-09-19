@@ -3,6 +3,9 @@ import re
 import datetime
 import sqlite3
 import hashlib
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import pandas as pd
 import streamlit as st
 
@@ -15,6 +18,56 @@ st.set_page_config(
 
 # --- AUTHORIZATION ADMIN EMAIL ---
 ADMIN_EMAIL = "prashanthainrenov@gmail.com"
+
+# --- EMAIL SENDER CONFIGURATION ---
+def send_authorization_email(applicant_name, applicant_email, applicant_user):
+    """
+    Sends an immediate authorization request email to prashanthainrenov@gmail.com
+    using Streamlit Secrets (st.secrets["smtp"]) or fallback configuration.
+    """
+    try:
+        # Retrieve credentials from Streamlit Secrets if configured
+        smtp_server = st.secrets.get("smtp", {}).get("server", "smtp.gmail.com")
+        smtp_port = int(st.secrets.get("smtp", {}).get("port", 587))
+        sender_email = st.secrets.get("smtp", {}).get("sender_email", ADMIN_EMAIL)
+        sender_password = st.secrets.get("smtp", {}).get("sender_password", "")
+
+        subject = f"🚨 ERP Access Authorization Required: {applicant_name}"
+        body = f"""
+Dear Prashanth,
+
+A new user has requested access to the Ain Renov Technical Services ERP System.
+
+Applicant Details:
+------------------
+Full Name: {applicant_name}
+Username: {applicant_user}
+Email Address: {applicant_email}
+Request Date: {datetime.date.today()}
+
+Please log in to your Ain Renov ERP Admin Dashboard to approve or reject this request under "Member Authorization Controls".
+
+Admin Portal: https://ain-renov-erp.streamlit.app
+        """
+
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = ADMIN_EMAIL
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+
+        if sender_password:
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, ADMIN_EMAIL, msg.as_string())
+            server.quit()
+            return True
+        else:
+            return False
+    except Exception as e:
+        print(f"Email notification error: {e}")
+        return False
 
 # --- DATABASE PERSISTENCE SETUP ---
 DB_FILE = "app_database.db"
@@ -41,7 +94,7 @@ def init_db():
         )
     ''')
 
-    # SCHEMA MIGRATION: Ensure 'email' and 'request_date' columns exist in older DB files
+    # SAFE SCHEMA MIGRATION: Dynamically inspect columns to prevent OperationalError
     c.execute("PRAGMA table_info(users)")
     columns = [column[1] for column in c.fetchall()]
     if "email" not in columns:
@@ -165,7 +218,6 @@ def init_db():
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', ('prashanth', ADMIN_EMAIL, hash_password('admin123'), 'Prashanth Kumar KV', 'ADMIN', 'ACTIVE', str(datetime.date.today())))
     else:
-        # Update admin email if missing
         c.execute("UPDATE users SET email = ?, role = 'ADMIN', status = 'ACTIVE' WHERE username = 'prashanth'", (ADMIN_EMAIL,))
     
     conn.commit()
@@ -263,7 +315,7 @@ if st.session_state.user is None:
                 
     with tab_sign:
         st.subheader("Request New Member Authorization")
-        st.info(f"New registrations require explicit approval sent to **{ADMIN_EMAIL}** before system access is granted.")
+        st.info(f"New registrations trigger an authorization request to **{ADMIN_EMAIL}** before access is granted.")
         r_user = st.text_input("Choose Username", key="r_user").strip().lower()
         r_email = st.text_input("Member Email Address", key="r_email").strip().lower()
         r_fname = st.text_input("Full Name", key="r_fname")
@@ -280,7 +332,13 @@ if st.session_state.user is None:
                     ''', (r_user, r_email, hash_password(r_pass), r_fname, 'USER', 'PENDING', str(datetime.date.today())))
                     conn.commit()
                     conn.close()
-                    st.success(f"Authorization request submitted! An approval request has been sent to {ADMIN_EMAIL}. Once authorized, you can log in.")
+                    
+                    # Dispatch Email
+                    email_sent = send_authorization_email(r_fname, r_email, r_user)
+                    if email_sent:
+                        st.success(f"Authorization email sent to {ADMIN_EMAIL}! You will be able to log in once approved.")
+                    else:
+                        st.success(f"Authorization request registered for {ADMIN_EMAIL}! (Pending Admin in-app approval).")
                 except sqlite3.IntegrityError:
                     st.error("Username or email already registered.")
             else:
