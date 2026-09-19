@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- DATABASE PERSISTENCE SETUP ---
+# --- DATABASE PERSISTENCE SETUP & AUTO-MIGRATION ---
 DB_FILE = "ain_renov_erp.db"
 
 def get_db_connection():
@@ -37,16 +37,42 @@ def init_db():
             particulars TEXT,
             payment_mode TEXT,
             is_petty_cash TEXT,
-            income_amount REAL,
-            income_vat REAL,
-            income_net REAL,
-            expense_amount REAL,
-            expense_vat REAL,
-            expense_net REAL,
+            income_amount REAL DEFAULT 0.0,
+            income_vat REAL DEFAULT 0.0,
+            income_net REAL DEFAULT 0.0,
+            expense_amount REAL DEFAULT 0.0,
+            expense_vat REAL DEFAULT 0.0,
+            expense_net REAL DEFAULT 0.0,
+            amount REAL DEFAULT 0.0,
             pnl_category TEXT
         )
     ''')
     
+    # Self-healing migration for existing databases missing columns
+    c.execute("PRAGMA table_info(financials)")
+    cols = [row[1] for row in c.fetchall()]
+    
+    required_cols = {
+        "sl_no": "INTEGER DEFAULT 0",
+        "yes_no": "TEXT DEFAULT 'YES'",
+        "payment_date": "TEXT DEFAULT ''",
+        "bill_no": "TEXT DEFAULT ''",
+        "payment_mode": "TEXT DEFAULT 'Bank Transfer'",
+        "is_petty_cash": "TEXT DEFAULT 'NO'",
+        "income_amount": "REAL DEFAULT 0.0",
+        "income_vat": "REAL DEFAULT 0.0",
+        "income_net": "REAL DEFAULT 0.0",
+        "expense_amount": "REAL DEFAULT 0.0",
+        "expense_vat": "REAL DEFAULT 0.0",
+        "expense_net": "REAL DEFAULT 0.0",
+        "amount": "REAL DEFAULT 0.0",
+        "pnl_category": "TEXT DEFAULT 'General'"
+    }
+    
+    for col_name, col_type in required_cols.items():
+        if col_name not in cols:
+            c.execute(f"ALTER TABLE financials ADD COLUMN {col_name} {col_type}")
+
     # 2. Quotation Tracker Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS quotations (
@@ -283,8 +309,11 @@ if menu == "Dashboard Overview":
     
     col1, col2, col3, col4 = st.columns(4)
     
-    tot_inc = df_fin['income_net'].sum() if not df_fin.empty else 0.0
-    tot_exp = df_fin['expense_net'].sum() if not df_fin.empty else 0.0
+    inc_col = df_fin['income_net'] if 'income_net' in df_fin.columns else pd.Series([0.0])
+    exp_col = df_fin['expense_net'] if 'expense_net' in df_fin.columns else pd.Series([0.0])
+    
+    tot_inc = inc_col.sum() if not df_fin.empty else 0.0
+    tot_exp = exp_col.sum() if not df_fin.empty else 0.0
     net_profit = tot_inc - tot_exp
     
     active_projects_count = len(df_proj[df_proj['status'] == 'In Progress']) if not df_proj.empty else 0
@@ -354,12 +383,12 @@ elif menu == "P&L & Financial Statements":
                         INSERT INTO financials (
                             sl_no, yes_no, trans_date, payment_date, bill_no, particulars,
                             payment_mode, is_petty_cash, income_amount, income_vat, income_net,
-                            expense_amount, expense_vat, expense_net, pnl_category
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            expense_amount, expense_vat, expense_net, amount, pnl_category
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         sl_no, yes_no, t_date, p_date, bill_no, particulars,
                         pmode, is_petty, inc_amt, inc_vat, inc_net,
-                        exp_amt, exp_vat, exp_net, pnl_cat
+                        exp_amt, exp_vat, exp_net, exp_net if exp_net > 0 else inc_net, pnl_cat
                     ))
                     
                     if is_petty.upper() == "YES" or "CASH" in pmode.upper():
@@ -393,7 +422,8 @@ elif menu == "P&L & Financial Statements":
     ]
     
     if not df_fin.empty:
-        df_fin['year'] = pd.to_datetime(df_fin['trans_date'], errors='coerce').dt.year
+        df_fin['trans_date_dt'] = pd.to_datetime(df_fin['trans_date'], errors='coerce')
+        df_fin['year'] = df_fin['trans_date_dt'].dt.year
         years = sorted([int(y) for y in df_fin['year'].dropna().unique() if y >= 2024])
         if not years:
             years = [2024]
@@ -401,7 +431,10 @@ elif menu == "P&L & Financial Statements":
         selected_year = st.selectbox("Select Financial Year for P&L", years, index=len(years)-1)
         df_y = df_fin[df_fin['year'] == selected_year]
         
-        tot_rev = df_y['income_net'].sum()
+        inc_col_y = df_y['income_net'] if 'income_net' in df_y.columns else pd.Series([0.0])
+        exp_col_y = df_y['expense_net'] if 'expense_net' in df_y.columns else pd.Series([0.0])
+        
+        tot_rev = inc_col_y.sum()
         
         st.write(f"### Total Revenue / Income ({selected_year}): AED {tot_rev:,.2f}")
         
@@ -409,7 +442,7 @@ elif menu == "P&L & Financial Statements":
         tot_expenses = 0.0
         
         for head in pnl_heads:
-            sub_exp = df_y[df_y['pnl_category'] == head]['expense_net'].sum()
+            sub_exp = df_y[df_y['pnl_category'] == head]['expense_net'].sum() if 'pnl_category' in df_y.columns else 0.0
             tot_expenses += sub_exp
             table_rows.append({
                 "P&L Head / Category": head,
@@ -459,6 +492,9 @@ elif menu == "VAT & Corporate Tax":
         if not df_fin.empty:
             df_fin['vat_quarter'] = df_fin['trans_date'].apply(get_vat_quarter)
             
+            inc_vat_col = df_fin['income_vat'] if 'income_vat' in df_fin.columns else pd.Series([0.0])
+            exp_vat_col = df_fin['expense_vat'] if 'expense_vat' in df_fin.columns else pd.Series([0.0])
+            
             vat_summary = df_fin.groupby('vat_quarter').agg({
                 'income_amount': 'sum',
                 'income_vat': 'sum',
@@ -478,7 +514,8 @@ elif menu == "VAT & Corporate Tax":
         st.caption("Financial Year: January to December starting 2024 Onwards")
         
         if not df_fin.empty:
-            df_fin['year'] = pd.to_datetime(df_fin['trans_date'], errors='coerce').dt.year
+            df_fin['trans_date_dt'] = pd.to_datetime(df_fin['trans_date'], errors='coerce')
+            df_fin['year'] = df_fin['trans_date_dt'].dt.year
             df_2024 = df_fin[df_fin['year'] >= 2024]
             
             yoy_summary = df_2024.groupby('year').agg({
@@ -704,10 +741,11 @@ elif menu == "Staff Salary Tracker":
     df_fin = pd.read_sql("SELECT * FROM financials", conn)
     
     st.subheader("Disbursements Identified in Financial Ledger")
-    if not df_fin.empty:
+    if not df_fin.empty and 'pnl_category' in df_fin.columns:
         sal_lines = df_fin[df_fin['pnl_category'] == 'Salaries, Commissions & Partner Distributions']
         if not sal_lines.empty:
-            st.dataframe(sal_lines[['trans_date', 'particulars', 'expense_net', 'payment_mode']], use_container_width=True)
+            cols_to_show = [c for c in ['trans_date', 'particulars', 'expense_net', 'payment_mode'] if c in sal_lines.columns]
+            st.dataframe(sal_lines[cols_to_show], use_container_width=True)
         else:
             st.info("No salary entries classified in financial ledger.")
     
