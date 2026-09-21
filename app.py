@@ -126,6 +126,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             party_type TEXT,
             party_name TEXT,
+            project_name TEXT,
             invoice_no TEXT,
             invoice_date TEXT,
             due_date TEXT,
@@ -133,6 +134,33 @@ def init_db():
             paid_amount REAL,
             due_amount REAL,
             status TEXT
+        )
+    """)
+
+    # 6. Detailed Project & Vendor/Client Analysis Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS project_analysis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_name TEXT,
+            client_name TEXT,
+            project_value REAL,
+            variation_1 REAL,
+            variation_2 REAL,
+            variation_3 REAL,
+            vat_rate REAL,
+            start_date TEXT,
+            end_date TEXT,
+            payment_condition TEXT,
+            advance_paid REAL,
+            progressive_paid REAL,
+            final_paid REAL,
+            vendor_1_name TEXT,
+            vendor_1_contract REAL,
+            vendor_1_paid REAL,
+            vendor_2_name TEXT,
+            vendor_2_contract REAL,
+            vendor_2_paid REAL,
+            remarks TEXT
         )
     """)
 
@@ -230,7 +258,7 @@ def delete_single_row(table_name, row_id):
     conn.commit()
     conn.close()
 
-# --- SIDEBAR & TEMPLATE DOWNLOADERS (CSV Standard Engine) ---
+# --- SIDEBAR & TEMPLATE DOWNLOADERS ---
 st.sidebar.title("💼 Ain Renov ERP")
 st.sidebar.markdown("---")
 
@@ -260,7 +288,7 @@ def generate_template_csv(template_type):
         ]
     elif template_type == "Vendors/Clients":
         cols = [
-            'Type', 'Party Name', 'Invoice No', 'Invoice Date', 'Due Date',
+            'Type', 'Party Name', 'Project Name', 'Invoice No', 'Invoice Date', 'Due Date',
             'Total Amount', 'Paid Amount', 'Due Amount', 'Status'
         ]
     df = pd.DataFrame(columns=cols)
@@ -402,12 +430,13 @@ if uploaded_file is not None:
                     
                     cursor.execute("""
                         INSERT INTO vendor_client_payments (
-                            party_type, party_name, invoice_no, invoice_date, due_date,
+                            party_type, party_name, project_name, invoice_no, invoice_date, due_date,
                             total_amount, paid_amount, due_amount, status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         str(row.get('Type', 'Vendor')),
                         str(row.get('Party Name', '')),
+                        str(row.get('Project Name', '')),
                         str(row.get('Invoice No', '')),
                         str(row.get('Invoice Date', '')).split()[0],
                         str(row.get('Due Date', '')).split()[0],
@@ -696,143 +725,236 @@ with tabs[5]:
                 """, (str(pc_date), pc_desc, cash_in, cash_out, new_bal, handed, rec_no))
                 conn.commit()
                 conn.close()
-                st.success("Petty cash entry recorded!")
+                st.success("Petty Cash transaction recorded!")
                 st.rerun()
 
     df_pc = load_table("petty_cash")
     if not df_pc.empty:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Cash In", f"{df_pc['cash_in'].sum():,.2f} AED")
-        c2.metric("Total Cash Out", f"{df_pc['cash_out'].sum():,.2f} AED")
-        c3.metric("Current Balance", f"{df_pc['balance'].iloc[-1]:,.2f} AED")
-
+        curr_bal = df_pc['balance'].iloc[-1]
+        st.metric("Current Available Petty Cash Balance", f"{curr_bal:,.2f} AED")
         st.dataframe(df_pc, use_container_width=True)
         
         st.markdown("---")
         pc_del_id = st.number_input("Enter Petty Cash ID to Delete", min_value=1, step=1, key="pc_del")
         if st.button("Delete Petty Cash Entry"):
             delete_single_row("petty_cash", pc_del_id)
-            st.success(f"Petty cash entry ID {pc_del_id} removed!")
+            st.success(f"Petty Cash Entry ID {pc_del_id} removed!")
             st.rerun()
     else:
-        st.info("No petty cash transactions recorded yet.")
+        st.info("No petty cash ledger records stored in database.")
 
 # -----------------------------------------------------------------------------
-# TAB 7: VENDORS & CLIENTS AGEING ANALYSIS
+# TAB 7: VENDORS & CLIENTS AGEING (UPDATED WITH ADVANCED PROJECT & VENDOR ANALYSIS)
 # -----------------------------------------------------------------------------
 with tabs[6]:
     st.header("💳 Vendors & Clients Ageing Analysis")
 
+    # Standard Log Form
     with st.expander("➕ Log Vendor / Client Payment Details"):
-        with st.form("vc_form"):
+        with st.form("vc_payment_form"):
             v1, v2 = st.columns(2)
             party_type = v1.selectbox("Party Type", ["Vendor", "Client"])
             party_name = v2.text_input("Party Name")
-            inv_no = v1.text_input("Invoice Number")
-            inv_date = v2.date_input("Invoice Date", datetime.date.today())
-            due_date = v1.date_input("Due Date", datetime.date.today() + datetime.timedelta(days=30))
-            tot_amt = v2.number_input("Total Amount (AED)", min_value=0.0)
-            paid_amt = v1.number_input("Paid Amount (AED)", min_value=0.0)
-            status_opt = v2.selectbox("Payment Status", ["Pending", "Partial", "Paid"])
+            p_project = v1.text_input("Project Name")
+            inv_no = v2.text_input("Invoice Number")
+            inv_date = v1.date_input("Invoice Date", datetime.date.today())
+            due_date = v2.date_input("Due Date", datetime.date.today() + datetime.timedelta(days=30))
+            tot_amt = v1.number_input("Total Amount (AED)", min_value=0.0)
+            paid_amt = v2.number_input("Paid Amount (AED)", min_value=0.0)
+            status = v1.selectbox("Payment Status", ["Pending", "Partially Paid", "Paid", "Overdue"])
 
             if st.form_submit_button("Save Payment Record"):
                 due_amt = tot_amt - paid_amt
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO vendor_client_payments (
-                        party_type, party_name, invoice_no, invoice_date, due_date,
-                        total_amount, paid_amount, due_amount, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (party_type, party_name, inv_no, str(inv_date), str(due_date), tot_amt, paid_amt, due_amt, status_opt))
+                    INSERT INTO vendor_client_payments (party_type, party_name, project_name, invoice_no, invoice_date, due_date, total_amount, paid_amount, due_amount, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (party_type, party_name, p_project, inv_no, str(inv_date), str(due_date), tot_amt, paid_amt, due_amt, status))
                 conn.commit()
                 conn.close()
-                st.success("Party payment record added!")
+                st.success("Vendor/Client payment record saved!")
                 st.rerun()
 
+    # Detailed Project Breakdown Input (As specified in requirement image)
+    with st.expander("🏗️ Comprehensive Project-Wise Vendor & Client Breakdown"):
+        st.caption("Log project value, variations, 0%-100% progressive payments with VAT options, and subcontractor costs.")
+        with st.form("detailed_project_form"):
+            col_p1, col_p2, col_p3 = st.columns(3)
+            proj_name = col_p1.text_input("Project Name")
+            client_name = col_p2.text_input("Client Name")
+            base_proj_val = col_p3.number_input("Project Contract Value (AED)", min_value=0.0)
+
+            v_col1, v_col2, v_col3 = st.columns(3)
+            var_1 = v_col1.number_input("Variation Work 1 Amount (AED)", min_value=0.0)
+            var_2 = v_col2.number_input("Variation Work 2 Amount (AED)", min_value=0.0)
+            var_3 = v_col3.number_input("Variation Work 3 Amount (AED)", min_value=0.0)
+
+            vat_option = st.selectbox("VAT Selection", ["5% Standard VAT", "0% Exempted VAT"])
+            vat_rate = 0.05 if "5%" in vat_option else 0.0
+
+            p_dates1, p_dates2, p_cond = st.columns(3)
+            p_start = p_dates1.date_input("Project Start Date", datetime.date.today())
+            p_end = p_dates2.date_input("Project End Date", datetime.date.today() + datetime.timedelta(days=90))
+            pay_cond = p_cond.text_input("Payment Condition (e.g. 10% Adv, 80% Prog, 10% Final)")
+
+            st.markdown("**Client Payment Milestones Received (AED)**")
+            pm1, pm2, pm3 = st.columns(3)
+            adv_paid = pm1.number_input("Advance Payment Received", min_value=0.0)
+            prog_paid = pm2.number_input("Progressive Payments Received (0-100%)", min_value=0.0)
+            fin_paid = pm3.number_input("Final Balance Payment Received", min_value=0.0)
+
+            st.markdown("**Vendors Allocated for Project**")
+            vend_c1, vend_c2 = st.columns(2)
+            v1_name = vend_c1.text_input("Vendor 1 Name")
+            v1_contract = vend_c2.number_input("Vendor 1 Contract Value", min_value=0.0)
+            v1_paid = vend_c2.number_input("Vendor 1 Amount Paid", min_value=0.0)
+
+            v2_name = vend_c1.text_input("Vendor 2 Name")
+            v2_contract = vend_c2.number_input("Vendor 2 Contract Value", min_value=0.0)
+            v2_paid = vend_c2.number_input("Vendor 2 Amount Paid", min_value=0.0)
+
+            rem_proj = st.text_input("Project Remarks / Notes")
+
+            if st.form_submit_button("Save Detailed Project Analysis"):
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO project_analysis (
+                        project_name, client_name, project_value, variation_1, variation_2, variation_3,
+                        vat_rate, start_date, end_date, payment_condition, advance_paid, progressive_paid,
+                        final_paid, vendor_1_name, vendor_1_contract, vendor_1_paid, vendor_2_name, vendor_2_contract, vendor_2_paid, remarks
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    proj_name, client_name, base_proj_val, var_1, var_2, var_3, vat_rate, str(p_start), str(p_end),
+                    pay_cond, adv_paid, prog_paid, fin_paid, v1_name, v1_contract, v1_paid, v2_name, v2_contract, v2_paid, rem_proj
+                ))
+                conn.commit()
+                conn.close()
+                st.success("Detailed Project Analysis recorded!")
+                st.rerun()
+
+    # Display Ageing and Detailed Analysis Data
     df_vc = load_table("vendor_client_payments")
     if not df_vc.empty:
-        # Calculate Ageing Days and Ageing Bucket
+        st.subheader("Invoice Ledger & Ageing Summary")
         df_vc['due_date_dt'] = pd.to_datetime(df_vc['due_date'], errors='coerce')
         today = pd.to_datetime(datetime.date.today())
-        df_vc['days_overdue'] = (today - df_vc['due_date_dt']).dt.days.apply(lambda x: x if x > 0 else 0)
+        df_vc['days_overdue'] = (today - df_vc['due_date_dt']).dt.days.apply(lambda x: max(x, 0) if pd.notnull(x) else 0)
 
         def age_bucket(days):
-            if days <= 0: return "Current"
-            elif days <= 30: return "1-30 Days"
-            elif days <= 60: return "31-60 Days"
-            elif days <= 90: return "61-90 Days"
-            else: return "90+ Days"
-
-        df_vc['Ageing_Bucket'] = df_vc['days_overdue'].apply(age_bucket)
-
-        v_tab, c_tab = st.tabs(["🚚 Vendor Payables", "🤝 Client Receivables"])
-
-        with v_tab:
-            st.subheader("Vendor Payables Summary")
-            df_v = df_vc[df_vc['party_type'] == 'Vendor']
-            if not df_v.empty:
-                v_tot = df_v['due_amount'].sum()
-                st.metric("Total Payable to Vendors", f"{v_tot:,.2f} AED")
-                st.dataframe(df_v[['id', 'party_name', 'invoice_no', 'due_date', 'total_amount', 'paid_amount', 'due_amount', 'days_overdue', 'Ageing_Bucket', 'status']], use_container_width=True)
+            if days == 0:
+                return "Current"
+            elif days <= 30:
+                return "1-30 Days"
+            elif days <= 60:
+                return "31-60 Days"
+            elif days <= 90:
+                return "61-90 Days"
             else:
-                st.info("No vendor payable records available.")
+                return "90+ Days"
 
-        with c_tab:
-            st.subheader("Client Receivables Summary")
-            df_c = df_vc[df_vc['party_type'] == 'Client']
-            if not df_c.empty:
-                c_tot = df_c['due_amount'].sum()
-                st.metric("Total Receivable from Clients", f"{c_tot:,.2f} AED")
-                st.dataframe(df_c[['id', 'party_name', 'invoice_no', 'due_date', 'total_amount', 'paid_amount', 'due_amount', 'days_overdue', 'Ageing_Bucket', 'status']], use_container_width=True)
-            else:
-                st.info("No client receivable records available.")
+        df_vc['ageing_bucket'] = df_vc['days_overdue'].apply(age_bucket)
+
+        party_filter = st.radio("Filter By Party Type", ["All", "Vendor", "Client"], horizontal=True)
+        df_vc_disp = df_vc if party_filter == "All" else df_vc[df_vc['party_type'] == party_filter]
+
+        st.dataframe(df_vc_disp, use_container_width=True)
 
         st.markdown("---")
-        vc_del_id = st.number_input("Enter Party Entry ID to Delete", min_value=1, step=1, key="vc_del")
-        if st.button("Delete Party Entry"):
+        vc_del_id = st.number_input("Enter Ledger Entry ID to Delete", min_value=1, step=1, key="vc_del")
+        if st.button("Delete Ledger Record"):
             delete_single_row("vendor_client_payments", vc_del_id)
-            st.success(f"Entry ID {vc_del_id} removed!")
+            st.success(f"Ledger Entry ID {vc_del_id} removed!")
             st.rerun()
     else:
-        st.info("No vendor or client payment entries stored in database.")
+        st.info("No vendor/client ledger records stored.")
+
+    # Detailed Project Analysis View
+    df_pa = load_table("project_analysis")
+    if not df_pa.empty:
+        st.markdown("---")
+        st.subheader("📊 Detailed Project Financials & Net Profit Analysis")
+        
+        df_pa['Total_Client_Contract'] = df_pa['project_value'] + df_pa['variation_1'] + df_pa['variation_2'] + df_pa['variation_3']
+        df_pa['Total_VAT_Amount'] = df_pa['Total_Client_Contract'] * df_pa['vat_rate']
+        df_pa['Total_Contract_Inc_VAT'] = df_pa['Total_Client_Contract'] + df_pa['Total_VAT_Amount']
+        
+        df_pa['Total_Client_Paid'] = df_pa['advance_paid'] + df_pa['progressive_paid'] + df_pa['final_paid']
+        df_pa['Balance_Due_From_Client'] = df_pa['Total_Contract_Inc_VAT'] - df_pa['Total_Client_Paid']
+        
+        df_pa['Total_Vendor_Cost'] = df_pa['vendor_1_contract'] + df_pa['vendor_2_contract']
+        df_pa['Total_Vendor_Paid'] = df_pa['vendor_1_paid'] + df_pa['vendor_2_paid']
+        df_pa['Pending_Vendor_Payments'] = df_pa['Total_Vendor_Cost'] - df_pa['Total_Vendor_Paid']
+        
+        df_pa['Project_Net_Profit'] = df_pa['Total_Client_Contract'] - df_pa['Total_Vendor_Cost']
+
+        display_cols = [
+            'id', 'project_name', 'client_name', 'Total_Client_Contract', 'Total_VAT_Amount',
+            'Total_Contract_Inc_VAT', 'Total_Client_Paid', 'Balance_Due_From_Client',
+            'Total_Vendor_Cost', 'Total_Vendor_Paid', 'Pending_Vendor_Payments', 'Project_Net_Profit'
+        ]
+
+        st.dataframe(df_pa[display_cols].style.format({
+            'Total_Client_Contract': '{:,.2f}',
+            'Total_VAT_Amount': '{:,.2f}',
+            'Total_Contract_Inc_VAT': '{:,.2f}',
+            'Total_Client_Paid': '{:,.2f}',
+            'Balance_Due_From_Client': '{:,.2f}',
+            'Total_Vendor_Cost': '{:,.2f}',
+            'Total_Vendor_Paid': '{:,.2f}',
+            'Pending_Vendor_Payments': '{:,.2f}',
+            'Project_Net_Profit': '{:,.2f}'
+        }), use_container_width=True)
+
+        pa_del_id = st.number_input("Enter Project Entry ID to Delete", min_value=1, step=1, key="pa_del")
+        if st.button("Delete Detailed Project Entry"):
+            delete_single_row("project_analysis", pa_del_id)
+            st.success(f"Project Analysis ID {pa_del_id} removed!")
+            st.rerun()
 
 # -----------------------------------------------------------------------------
 # TAB 8: ACTION ZONE & DATA CONTROL
 # -----------------------------------------------------------------------------
 with tabs[7]:
-    st.header("⚙️ Data Control & Administrative Action Zone")
-    st.warning("⚠️ Caution: Actions performed here directly modify the SQLite database.")
+    st.header("⚙️ Data Control & Emergency Actions")
+    st.warning("⚠️ Caution: Actions taken in this zone directly affect stored database records!")
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("🗑️ Selective Data Wiping")
-        clear_target = st.selectbox(
-            "Select Table to Wipe",
-            ["transactions", "quotations", "staff_salaries", "petty_cash", "vendor_client_payments"]
-        )
-        
-        if st.button(f"Clear All Data from '{clear_target}'", type="primary"):
-            clear_table(clear_target)
-            st.success(f"All records from table '{clear_target}' have been permanently deleted.")
+    st.subheader("1. Category-Wise Reset")
+    cat_to_clear = st.selectbox("Select Category to Reset/Clear Transactions", ["Select Category"] + CATEGORIES)
+    if st.button("Clear Transactions for Selected Category"):
+        if cat_to_clear != "Select Category":
+            clear_table("transactions", category=cat_to_clear)
+            st.success(f"All transactions under category '{cat_to_clear}' cleared!")
             st.rerun()
+        else:
+            st.error("Please select a valid category.")
 
-    with col2:
-        st.subheader("💾 Complete Database Backup")
-        conn = get_connection()
-        
-        # Export database tables to Excel using openpyxl engine
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            for table_name in ["transactions", "quotations", "staff_salaries", "petty_cash", "vendor_client_payments"]:
-                df_temp = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-                df_temp.to_excel(writer, sheet_name=table_name, index=False)
-        conn.close()
+    st.markdown("---")
+    st.subheader("2. Wipe Entire Module Data")
+    table_to_clear = st.selectbox("Select Module / Table to Wipe Entirely", [
+        "Select Table",
+        "Financial Transactions (transactions)",
+        "Quotations Tracker (quotations)",
+        "Staff Salaries (staff_salaries)",
+        "Petty Cash (petty_cash)",
+        "Vendor & Client Payments (vendor_client_payments)",
+        "Project Analysis (project_analysis)"
+    ])
 
-        st.download_button(
-            label="Download Complete ERP Database (Excel)",
-            data=output.getvalue(),
-            file_name=f"Ain_Renov_ERP_Backup_{datetime.date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    table_map = {
+        "Financial Transactions (transactions)": "transactions",
+        "Quotations Tracker (quotations)": "quotations",
+        "Staff Salaries (staff_salaries)": "staff_salaries",
+        "Petty Cash (petty_cash)": "petty_cash",
+        "Vendor & Client Payments (vendor_client_payments)": "vendor_client_payments",
+        "Project Analysis (project_analysis)": "project_analysis"
+    }
+
+    if st.button("Wipe Selected Table"):
+        if table_to_clear in table_map:
+            clear_table(table_map[table_to_clear])
+            st.success(f"Table '{table_to_clear}' completely wiped!")
+            st.rerun()
+        else:
+            st.error("Please select a valid table.")
