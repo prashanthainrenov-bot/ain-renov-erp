@@ -201,7 +201,7 @@ def get_vat_quarter(date_obj):
         return f"{adj_year} Q4 (Dec-Feb)"
     return "Unknown"
 
-# --- HELPER DATABASE FUNCTIONS ---
+# --- HELPER DATABASE & EXCEL EXPORT FUNCTIONS ---
 def load_table(table_name):
     conn = get_connection()
     df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
@@ -224,6 +224,14 @@ def delete_single_row(table_name, row_id):
     cursor.execute(f"DELETE FROM {table_name} WHERE id = ?", (row_id,))
     conn.commit()
     conn.close()
+
+def to_excel_download(df_dict):
+    """Converts a dictionary of DataFrames to a downloadable Excel file in memory."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        for sheet_name, df in df_dict.items():
+            df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+    return output.getvalue()
 
 # --- SIDEBAR & TEMPLATE DOWNLOADERS ---
 st.sidebar.title("💼 Ain Renov ERP")
@@ -258,6 +266,13 @@ def generate_template_csv(template_type):
             'Type', 'Party Name', 'Project Name', 'Invoice No', 'Invoice Date', 'Due Date',
             'Total Amount', 'Paid Amount', 'Due Amount', 'Status'
         ]
+    elif template_type == "Project Analysis":
+        cols = [
+            'Project Name', 'Client Name', 'Project Value', 'Variation 1', 'Variation 2', 'Variation 3',
+            'VAT Rate (%)', 'Start Date', 'End Date', 'Payment Condition', 'Advance Paid', 'Progressive Paid',
+            'Final Paid', 'Vendor 1 Name', 'Vendor 1 Contract', 'Vendor 1 Paid', 'Vendor 2 Name',
+            'Vendor 2 Contract', 'Vendor 2 Paid', 'Remarks'
+        ]
     df = pd.DataFrame(columns=cols)
     return df.to_csv(index=False).encode('utf-8')
 
@@ -266,13 +281,14 @@ st.sidebar.download_button("Quotations Template (CSV)", generate_template_csv("Q
 st.sidebar.download_button("Salaries Template (CSV)", generate_template_csv("Salaries"), "salaries_template.csv", "text/csv")
 st.sidebar.download_button("Petty Cash Template (CSV)", generate_template_csv("Petty Cash"), "petty_cash_template.csv", "text/csv")
 st.sidebar.download_button("Vendors/Clients Template (CSV)", generate_template_csv("Vendors/Clients"), "vendors_clients_template.csv", "text/csv")
+st.sidebar.download_button("Project Analysis Template (CSV)", generate_template_csv("Project Analysis"), "project_analysis_template.csv", "text/csv")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📤 Upload Data File")
 
 upload_type = st.sidebar.selectbox(
     "Select File Type to Upload",
-    ["Financials Template", "Quotation Format", "Staff Salaries Template", "Petty Cash Template", "Vendor/Client Template"]
+    ["Financials Template", "Quotation Format", "Staff Salaries Template", "Petty Cash Template", "Vendor/Client Template", "Project Analysis Template"]
 )
 
 uploaded_file = st.sidebar.file_uploader(f"Upload {upload_type}", type=["xlsx", "xls", "csv"])
@@ -405,6 +421,39 @@ if uploaded_file is not None:
                         str(row.get('Status', 'Pending'))
                     ))
 
+            elif upload_type == "Project Analysis Template":
+                df_pa = pd.read_excel(uploaded_file) if uploaded_file.name.endswith(('.xlsx', '.xls')) else pd.read_csv(uploaded_file)
+                for _, row in df_pa.iterrows():
+                    cursor.execute("""
+                        INSERT INTO project_analysis (
+                            project_name, client_name, project_value, variation_1, variation_2, variation_3,
+                            vat_rate, start_date, end_date, payment_condition, advance_paid, progressive_paid,
+                            final_paid, vendor_1_name, vendor_1_contract, vendor_1_paid, vendor_2_name,
+                            vendor_2_contract, vendor_2_paid, remarks
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(row.get('Project Name', '')),
+                        str(row.get('Client Name', '')),
+                        float(row.get('Project Value', 0.0) if pd.notnull(row.get('Project Value')) else 0.0),
+                        float(row.get('Variation 1', 0.0) if pd.notnull(row.get('Variation 1')) else 0.0),
+                        float(row.get('Variation 2', 0.0) if pd.notnull(row.get('Variation 2')) else 0.0),
+                        float(row.get('Variation 3', 0.0) if pd.notnull(row.get('Variation 3')) else 0.0),
+                        float(row.get('VAT Rate (%)', 5.0) if pd.notnull(row.get('VAT Rate (%)')) else 5.0),
+                        str(row.get('Start Date', '')).split()[0],
+                        str(row.get('End Date', '')).split()[0],
+                        str(row.get('Payment Condition', '')),
+                        float(row.get('Advance Paid', 0.0) if pd.notnull(row.get('Advance Paid')) else 0.0),
+                        float(row.get('Progressive Paid', 0.0) if pd.notnull(row.get('Progressive Paid')) else 0.0),
+                        float(row.get('Final Paid', 0.0) if pd.notnull(row.get('Final Paid')) else 0.0),
+                        str(row.get('Vendor 1 Name', '')),
+                        float(row.get('Vendor 1 Contract', 0.0) if pd.notnull(row.get('Vendor 1 Contract')) else 0.0),
+                        float(row.get('Vendor 1 Paid', 0.0) if pd.notnull(row.get('Vendor 1 Paid')) else 0.0),
+                        str(row.get('Vendor 2 Name', '')),
+                        float(row.get('Vendor 2 Contract', 0.0) if pd.notnull(row.get('Vendor 2 Contract')) else 0.0),
+                        float(row.get('Vendor 2 Paid', 0.0) if pd.notnull(row.get('Vendor 2 Paid')) else 0.0),
+                        str(row.get('Remarks', ''))
+                    ))
+
             conn.commit()
             st.sidebar.success("File uploaded and stored in database!")
             st.rerun()
@@ -470,6 +519,13 @@ with tabs[0]:
             df_disp[['id', 'sl_no', 'date', 'invoice_number', 'particulars', 'project_name', 'payment_mode', 'is_petty_cash', 'is_cash', 'category', 'income_net', 'expense_net']],
             use_container_width=True
         )
+
+        st.download_button(
+            "📥 Export Financials to Excel",
+            data=to_excel_download({"Transactions": df_disp, "YoY Summary": yoy_df}),
+            file_name="financials_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
         
         st.markdown("---")
         st.subheader("Delete Selected Transaction")
@@ -514,6 +570,20 @@ with tabs[1]:
             st.write(f"**Retained Earnings (Net Profit):** {retained_earnings:,.2f} AED")
             st.markdown("---")
             st.write(f"**Total Liabilities & Equity:** {payables + retained_earnings:,.2f} AED")
+
+        bs_df = pd.DataFrame([
+            {"Category": "Assets", "Item": "Petty Cash Balance", "Amount (AED)": petty_cash_balance},
+            {"Category": "Assets", "Item": "Accounts Receivable (Clients)", "Amount (AED)": receivables},
+            {"Category": "Liabilities", "Item": "Accounts Payable (Vendors)", "Amount (AED)": payables},
+            {"Category": "Equity", "Item": "Retained Earnings", "Amount (AED)": retained_earnings}
+        ])
+
+        st.download_button(
+            "📥 Export Balance Sheet to Excel",
+            data=to_excel_download({"Balance Sheet": bs_df}),
+            file_name="balance_sheet.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     else:
         st.info("No transaction data available to generate Balance Sheet.")
 
@@ -555,6 +625,13 @@ with tabs[2]:
             'Input_VAT': '{:,.2f}',
             'Net_VAT_Payable': '{:,.2f}'
         }), use_container_width=True)
+
+        st.download_button(
+            "📥 Export Tax & VAT Statements to Excel",
+            data=to_excel_download({"Corporate Tax": ct_summary, "VAT Summary": vat_summary}),
+            file_name="tax_vat_reports.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     else:
         st.info("No transactions available for tax calculation.")
 
@@ -592,6 +669,13 @@ with tabs[3]:
     if not df_q.empty:
         st.dataframe(df_q, use_container_width=True)
         
+        st.download_button(
+            "📥 Export Quotations to Excel",
+            data=to_excel_download({"Quotations": df_q}),
+            file_name="quotations_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
         st.markdown("---")
         q_del_id = st.number_input("Enter Quotation ID to Delete", min_value=1, step=1, key="q_del")
         if st.button("Delete Quotation Entry"):
@@ -646,6 +730,13 @@ with tabs[4]:
         
         st.dataframe(df_sal_disp, use_container_width=True)
         
+        st.download_button(
+            "📥 Export Staff Salaries to Excel",
+            data=to_excel_download({"Salaries": df_sal_disp}),
+            file_name="salaries_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
         st.markdown("---")
         sal_del_id = st.number_input("Enter Salary Record ID to Delete", min_value=1, step=1, key="sal_del")
         if st.button("Delete Salary Record"):
@@ -665,100 +756,300 @@ with tabs[5]:
         with st.form("petty_cash_form"):
             pc1, pc2 = st.columns(2)
             pc_date = pc1.date_input("Date", datetime.date.today())
-            pc_desc = pc2.text_input("Description / Purpose")
-            cash_in = pc1.number_input("Cash In (Deposit)", min_value=0.0)
-            cash_out = pc2.number_input("Cash Out (Expense)", min_value=0.0)
-            handed = pc1.text_input("Handed To / Recipient")
-            receipt_no = pc2.text_input("Receipt / Voucher No")
+            pc_desc = pc2.text_input("Description / Particulars")
+            pc_in = pc1.number_input("Cash In (AED)", min_value=0.0)
+            pc_out = pc2.number_input("Cash Out (AED)", min_value=0.0)
+            pc_to = pc1.text_input("Handed To / Person")
+            pc_rec = pc2.text_input("Receipt / Voucher No")
             
-            if st.form_submit_button("Save Petty Cash Record"):
+            if st.form_submit_button("Log Petty Cash Entry"):
                 df_pc_curr = load_table("petty_cash")
                 prev_bal = df_pc_curr['balance'].iloc[-1] if not df_pc_curr.empty else 0.0
-                new_bal = prev_bal + cash_in - cash_out
+                new_bal = prev_bal + pc_in - pc_out
                 
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO petty_cash (date, description, cash_in, cash_out, balance, handed_to, receipt_no)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (str(pc_date), pc_desc, cash_in, cash_out, new_bal, handed, receipt_no))
+                """, (str(pc_date), pc_desc, pc_in, pc_out, new_bal, pc_to, pc_rec))
                 conn.commit()
                 conn.close()
-                st.success("Petty Cash transaction recorded!")
+                st.success("Petty cash logged!")
                 st.rerun()
 
     df_pc = load_table("petty_cash")
     if not df_pc.empty:
+        curr_bal = df_pc['balance'].iloc[-1] if 'balance' in df_pc.columns else 0.0
+        st.metric("Current Petty Cash Balance", f"{curr_bal:,.2f} AED")
         st.dataframe(df_pc, use_container_width=True)
         
+        st.download_button(
+            "📥 Export Petty Cash Ledger to Excel",
+            data=to_excel_download({"Petty Cash": df_pc}),
+            file_name="petty_cash_ledger.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
         st.markdown("---")
-        pc_del_id = st.number_input("Enter Petty Cash Record ID to Delete", min_value=1, step=1, key="pc_del")
+        pc_del_id = st.number_input("Enter Petty Cash ID to Delete", min_value=1, step=1, key="pc_del")
         if st.button("Delete Petty Cash Entry"):
             delete_single_row("petty_cash", pc_del_id)
-            st.success(f"Petty Cash ID {pc_del_id} removed!")
+            st.success(f"Petty cash record ID {pc_del_id} removed!")
             st.rerun()
     else:
-        st.info("No petty cash ledger records available.")
+        st.info("No petty cash transactions recorded.")
 
 # -----------------------------------------------------------------------------
-# TAB 7: VENDORS & CLIENTS AGEING
+# TAB 7: VENDORS & CLIENTS AGEING & PROJECT PROFITABILITY ANALYSIS
 # -----------------------------------------------------------------------------
 with tabs[6]:
-    st.header("💳 Vendor & Client Ledger / Ageing Analysis")
+    st.header("💳 Vendors & Clients Ageing & Project Profitability Analysis")
     
-    with st.expander("➕ Add Vendor / Client Invoice"):
-        with st.form("vendor_client_form"):
+    st.subheader("1. Log / Record Vendor or Client Payment Invoice")
+    with st.expander("➕ Add Vendor / Client Invoice Entry"):
+        with st.form("vc_form"):
             vc1, vc2 = st.columns(2)
             party_type = vc1.selectbox("Party Type", ["Vendor", "Client"])
-            party_name = vc2.text_input("Party Name")
-            p_project = vc1.text_input("Project Name")
-            inv_no = vc2.text_input("Invoice No")
+            party_name = vc2.text_input("Party / Company Name")
+            p_name = vc1.text_input("Project Name")
+            inv_no = vc2.text_input("Invoice Number")
             inv_date = vc1.date_input("Invoice Date", datetime.date.today())
             due_date = vc2.date_input("Due Date", datetime.date.today() + datetime.timedelta(days=30))
             tot_amt = vc1.number_input("Total Amount (AED)", min_value=0.0)
             paid_amt = vc2.number_input("Paid Amount (AED)", min_value=0.0)
-            status = vc1.selectbox("Status", ["Pending", "Partially Paid", "Paid Overdue", "Cleared"])
+            status = vc1.selectbox("Status", ["Pending", "Partially Paid", "Paid In Full"])
             
-            if st.form_submit_button("Save Entry"):
+            if st.form_submit_button("Save Payment Record"):
                 due_amt = tot_amt - paid_amt
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO vendor_client_payments (party_type, party_name, project_name, invoice_no, invoice_date, due_date, total_amount, paid_amount, due_amount, status)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (party_type, party_name, p_project, inv_no, str(inv_date), str(due_date), tot_amt, paid_amt, due_amt, status))
+                """, (party_type, party_name, p_name, inv_no, str(inv_date), str(due_date), tot_amt, paid_amt, due_amt, status))
                 conn.commit()
                 conn.close()
-                st.success("Record saved!")
+                st.success("Invoice record saved!")
                 st.rerun()
 
     df_vc = load_table("vendor_client_payments")
     if not df_vc.empty:
-        st.dataframe(df_vc, use_container_width=True)
+        st.markdown("### Ledger Records")
+        party_filter = st.radio("Filter Party Type", ["All", "Client", "Vendor"], horizontal=True)
+        df_vc_disp = df_vc if party_filter == "All" else df_vc[df_vc['party_type'] == party_filter]
         
+        st.dataframe(df_vc_disp, use_container_width=True)
+        
+        st.download_button(
+            "📥 Export Vendor/Client Ledger to Excel",
+            data=to_excel_download({"Vendor & Client Ledger": df_vc_disp}),
+            file_name="vendor_client_ledger.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
         st.markdown("---")
-        vc_del_id = st.number_input("Enter Record ID to Delete", min_value=1, step=1, key="vc_del")
-        if st.button("Delete Vendor/Client Record"):
+        vc_del_id = st.number_input("Enter Ledger Record ID to Delete", min_value=1, step=1, key="vc_del")
+        if st.button("Delete Ledger Entry"):
             delete_single_row("vendor_client_payments", vc_del_id)
             st.success(f"Record ID {vc_del_id} removed!")
             st.rerun()
     else:
-        st.info("No vendor or client ledger entries found.")
+        st.info("No vendor or client ledger records available.")
+
+    st.markdown("---")
+    st.header("📈 Detailed Project Profit & Loss / Profitability Analysis")
+    
+    with st.expander("➕ Add / Manage Detailed Project Analysis Entry"):
+        with st.form("project_analysis_form"):
+            pa1, pa2 = st.columns(2)
+            prj_name = pa1.text_input("Project Name", key="pa_prj_name")
+            clt_name = pa2.text_input("Client Name", key="pa_clt_name")
+            prj_val = pa1.number_input("Original Contract Value (AED)", min_value=0.0, key="pa_prj_val")
+            var_1 = pa2.number_input("Variation Claim 1 (AED)", min_value=0.0, key="pa_var1")
+            var_2 = pa1.number_input("Variation Claim 2 (AED)", min_value=0.0, key="pa_var2")
+            var_3 = pa2.number_input("Variation Claim 3 (AED)", min_value=0.0, key="pa_var3")
+            vat_r = pa1.number_input("VAT Rate (%)", min_value=0.0, value=5.0, key="pa_vat")
+            s_date = pa2.date_input("Start Date", datetime.date.today(), key="pa_sdate")
+            e_date = pa1.date_input("End Date", datetime.date.today() + datetime.timedelta(days=90), key="pa_edate")
+            pay_cond = pa2.text_input("Payment Conditions / Terms", key="pa_pay_cond")
+            
+            st.markdown("**Client Payments Received Breakdown**")
+            adv_p = pa1.number_input("Advance Paid by Client (AED)", min_value=0.0, key="pa_adv")
+            prog_p = pa2.number_input("Progressive Paid by Client (AED)", min_value=0.0, key="pa_prog")
+            fin_p = pa1.number_input("Final Settlement Paid (AED)", min_value=0.0, key="pa_fin")
+            
+            st.markdown("**Subcontractor / Vendor Contracts Breakdown**")
+            v1_n = pa2.text_input("Vendor 1 Name", key="pa_v1n")
+            v1_c = pa1.number_input("Vendor 1 Contract Amount (AED)", min_value=0.0, key="pa_v1c")
+            v1_p = pa2.number_input("Vendor 1 Amount Paid (AED)", min_value=0.0, key="pa_v1p")
+            
+            v2_n = pa1.text_input("Vendor 2 Name", key="pa_v2n")
+            v2_c = pa2.number_input("Vendor 2 Contract Amount (AED)", min_value=0.0, key="pa_v2c")
+            v2_p = pa1.number_input("Vendor 2 Amount Paid (AED)", min_value=0.0, key="pa_v2p")
+            
+            pa_rem = pa2.text_area("Remarks / Comments", key="pa_rem")
+
+            if st.form_submit_button("Save Project Analysis Record"):
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO project_analysis (
+                        project_name, client_name, project_value, variation_1, variation_2, variation_3,
+                        vat_rate, start_date, end_date, payment_condition, advance_paid, progressive_paid,
+                        final_paid, vendor_1_name, vendor_1_contract, vendor_1_paid, vendor_2_name,
+                        vendor_2_contract, vendor_2_paid, remarks
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    prj_name, clt_name, prj_val, var_1, var_2, var_3,
+                    vat_r, str(s_date), str(e_date), pay_cond, adv_p, prog_p,
+                    fin_p, v1_n, v1_c, v1_p, v2_n, v2_c, v2_p, pa_rem
+                ))
+                conn.commit()
+                conn.close()
+                st.success("Project analysis record saved!")
+                st.rerun()
+
+    df_pa = load_table("project_analysis")
+    df_tx = load_table("transactions")
+
+    if not df_pa.empty:
+        # Calculate individual project metrics
+        analysis_records = []
+        for idx, row in df_pa.iterrows():
+            p_name = row['project_name']
+            orig_val = float(row.get('project_value', 0.0) or 0.0)
+            v1 = float(row.get('variation_1', 0.0) or 0.0)
+            v2 = float(row.get('variation_2', 0.0) or 0.0)
+            v3 = float(row.get('variation_3', 0.0) or 0.0)
+            total_rev_contract = orig_val + v1 + v2 + v3
+
+            total_received = float(row.get('advance_paid', 0.0) or 0.0) + float(row.get('progressive_paid', 0.0) or 0.0) + float(row.get('final_paid', 0.0) or 0.0)
+            
+            v1_c = float(row.get('vendor_1_contract', 0.0) or 0.0)
+            v2_c = float(row.get('vendor_2_contract', 0.0) or 0.0)
+            total_vendor_contracts = v1_c + v2_c
+
+            # Expenses from transactions table tagged to this project
+            if not df_tx.empty and 'project_name' in df_tx.columns:
+                tx_exp = df_tx[df_tx['project_name'].astype(str).str.strip().str.lower() == str(p_name).strip().str.lower()]['expense_net'].sum()
+            else:
+                tx_exp = 0.0
+
+            total_cost = total_vendor_contracts + tx_exp
+            net_profit = total_rev_contract - total_cost
+            profit_pct = (net_profit / total_rev_contract * 100) if total_rev_contract > 0 else 0.0
+
+            analysis_records.append({
+                "ID": row['id'],
+                "Project Name": p_name,
+                "Client Name": row['client_name'],
+                "Original Contract (AED)": orig_val,
+                "Total Variations (AED)": v1 + v2 + v3,
+                "Total Revised Contract (AED)": total_rev_contract,
+                "Total Client Received (AED)": total_received,
+                "Client Due (AED)": total_rev_contract - total_received,
+                "Total Vendor Contracts (AED)": total_vendor_contracts,
+                "Direct Transactions Expenses (AED)": tx_exp,
+                "Total Cost (AED)": total_cost,
+                "Net Profit / Loss (AED)": net_profit,
+                "Profit / Loss (%)": profit_pct
+            })
+
+        df_pa_summary = pd.DataFrame(analysis_records)
+
+        # Tabulation / Selection for Individual vs Consolidated
+        analysis_view = st.radio("Select Analysis View", ["All Consolidated Projects Analysis", "Individual Project Breakdown"], horizontal=True)
+
+        if analysis_view == "All Consolidated Projects Analysis":
+            st.subheader("🌐 Consolidated All Projects Summary")
+            
+            c_rev = df_pa_summary["Total Revised Contract (AED)"].sum()
+            c_rec = df_pa_summary["Total Client Received (AED)"].sum()
+            c_cost = df_pa_summary["Total Cost (AED)"].sum()
+            c_profit = df_pa_summary["Net Profit / Loss (AED)"].sum()
+            c_margin = (c_profit / c_rev * 100) if c_rev > 0 else 0.0
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Revised Contract Value", f"{c_rev:,.2f} AED")
+            m2.metric("Total Received from Clients", f"{c_rec:,.2f} AED")
+            m3.metric("Consolidated Expenses & Costs", f"{c_cost:,.2f} AED")
+            m4.metric("Consolidated Net Profit", f"{c_profit:,.2f} AED", delta=f"{c_margin:.2f}% Margin")
+
+            st.dataframe(df_pa_summary.style.format({
+                "Original Contract (AED)": "{:,.2f}",
+                "Total Variations (AED)": "{:,.2f}",
+                "Total Revised Contract (AED)": "{:,.2f}",
+                "Total Client Received (AED)": "{:,.2f}",
+                "Client Due (AED)": "{:,.2f}",
+                "Total Vendor Contracts (AED)": "{:,.2f}",
+                "Direct Transactions Expenses (AED)": "{:,.2f}",
+                "Total Cost (AED)": "{:,.2f}",
+                "Net Profit / Loss (AED)": "{:,.2f}",
+                "Profit / Loss (%)": "{:+.2f}%"
+            }), use_container_width=True)
+
+        else:
+            st.subheader("🔍 Individual Project Profitability Deep-Dive")
+            prj_list = df_pa_summary["Project Name"].unique().tolist()
+            selected_prj = st.selectbox("Select Project to View", prj_list)
+            
+            df_ind = df_pa_summary[df_pa_summary["Project Name"] == selected_prj].iloc[0]
+            
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("Project Revised Value", f"{df_ind['Total Revised Contract (AED)']:,.2f} AED")
+            p2.metric("Total Client Paid", f"{df_ind['Total Client Received (AED)']:,.2f} AED")
+            p3.metric("Total Incurred Cost", f"{df_ind['Total Cost (AED)']:,.2f} AED")
+            p4.metric("Net Profit / Loss", f"{df_ind['Net Profit / Loss (AED)']:,.2f} AED", delta=f"{df_ind['Profit / Loss (%)']:.2f}% Margin")
+
+            st.json(df_ind.to_dict())
+
+        st.markdown("---")
+        st.subheader("📥 Download Project Profit & Loss Analysis Report in Excel Format")
+        
+        excel_data = to_excel_download({
+            "Consolidated Summary": df_pa_summary,
+            "Raw Project Analysis Data": df_pa
+        })
+
+        st.download_button(
+            label="📊 Download Complete Project Analysis Report (Excel)",
+            data=excel_data,
+            file_name=f"Project_Profitability_Analysis_{datetime.date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        st.markdown("---")
+        pa_del_id = st.number_input("Enter Project Analysis ID to Delete", min_value=1, step=1, key="pa_del")
+        if st.button("Delete Project Analysis Record"):
+            delete_single_row("project_analysis", pa_del_id)
+            st.success(f"Project Analysis record ID {pa_del_id} removed!")
+            st.rerun()
+    else:
+        st.info("No detailed project analysis entries found. Enter data in the form above or upload via the sidebar.")
 
 # -----------------------------------------------------------------------------
 # TAB 8: ACTION ZONE & DATA CONTROL
 # -----------------------------------------------------------------------------
 with tabs[7]:
-    st.header("⚙️ Database Operations & Data Control")
-    st.warning("⚠️ Warning: Operations here directly alter or delete database entries!")
+    st.header("⚙️ Action Zone & Data Management")
+    st.warning("⚠️ Caution: Actions taken in this zone directly alter database records.")
     
-    st.subheader("Clear Table Data")
-    table_to_clear = st.selectbox(
-        "Select Table to Purge",
-        ["transactions", "quotations", "staff_salaries", "petty_cash", "vendor_client_payments", "project_analysis"]
-    )
+    st.subheader("Purge & Reset System Tables")
+    col_del1, col_del2 = st.columns(2)
     
-    if st.button(f"Purge All Records from {table_to_clear}"):
-        clear_table(table_to_clear)
-        st.success(f"All data cleared from {table_to_clear}!")
-        st.rerun()
+    with col_del1:
+        table_to_clear = st.selectbox("Select Table to Clear Completely", [
+            "transactions", "quotations", "staff_salaries", "petty_cash", "vendor_client_payments", "project_analysis"
+        ])
+        if st.button("Clear Entire Selected Table", type="primary"):
+            clear_table(table_to_clear)
+            st.success(f"Table '{table_to_clear}' cleared successfully!")
+            st.rerun()
+            
+    with col_del2:
+        cat_to_clear = st.selectbox("Clear Transactions by Category", CATEGORIES)
+        if st.button("Clear Selected Category Data"):
+            clear_table("transactions", category=cat_to_clear)
+            st.success(f"Transactions in category '{cat_to_clear}' removed!")
+            st.rerun()
