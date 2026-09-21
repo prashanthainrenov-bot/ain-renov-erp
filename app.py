@@ -27,6 +27,19 @@ def migrate_db(conn):
     """Dynamically updates database schema without breaking existing tables."""
     cursor = conn.cursor()
     
+    # Generate 10 Vendor schema dynamically
+    project_analysis_schema = {
+        "project_name": "TEXT", "client_name": "TEXT", "project_value": "REAL",
+        "variation_1": "REAL", "variation_2": "REAL", "variation_3": "REAL",
+        "vat_rate": "REAL", "start_date": "TEXT", "end_date": "TEXT",
+        "payment_condition": "TEXT", "advance_paid": "REAL", "progressive_paid": "REAL",
+        "final_paid": "REAL", "remarks": "TEXT"
+    }
+    for i in range(1, 11):
+        project_analysis_schema[f"vendor_{i}_name"] = "TEXT"
+        project_analysis_schema[f"vendor_{i}_contract"] = "REAL"
+        project_analysis_schema[f"vendor_{i}_paid"] = "REAL"
+
     schemas = {
         "transactions": {
             "sl_no": "INTEGER", "vat_claimed": "TEXT", "date": "TEXT", "payment_date": "TEXT",
@@ -55,15 +68,7 @@ def migrate_db(conn):
             "invoice_no": "TEXT", "invoice_date": "TEXT", "due_date": "TEXT",
             "total_amount": "REAL", "paid_amount": "REAL", "due_amount": "REAL", "status": "TEXT"
         },
-        "project_analysis": {
-            "project_name": "TEXT", "client_name": "TEXT", "project_value": "REAL",
-            "variation_1": "REAL", "variation_2": "REAL", "variation_3": "REAL",
-            "vat_rate": "REAL", "start_date": "TEXT", "end_date": "TEXT",
-            "payment_condition": "TEXT", "advance_paid": "REAL", "progressive_paid": "REAL",
-            "final_paid": "REAL", "vendor_1_name": "TEXT", "vendor_1_contract": "REAL",
-            "vendor_1_paid": "REAL", "vendor_2_name": "TEXT", "vendor_2_contract": "REAL",
-            "vendor_2_paid": "REAL", "remarks": "TEXT"
-        }
+        "project_analysis": project_analysis_schema
     }
 
     for table, columns in schemas.items():
@@ -133,16 +138,15 @@ def init_db():
     """)
 
     # 6. Project Analysis Table
-    cursor.execute("""
+    vendor_cols_sql = ", ".join([f"vendor_{i}_name TEXT, vendor_{i}_contract REAL, vendor_{i}_paid REAL" for i in range(1, 11)])
+    cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS project_analysis (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_name TEXT, client_name TEXT, project_value REAL,
             variation_1 REAL, variation_2 REAL, variation_3 REAL,
             vat_rate REAL, start_date TEXT, end_date TEXT,
             payment_condition TEXT, advance_paid REAL, progressive_paid REAL,
-            final_paid REAL, vendor_1_name TEXT, vendor_1_contract REAL,
-            vendor_1_paid REAL, vendor_2_name TEXT, vendor_2_contract REAL,
-            vendor_2_paid REAL, remarks TEXT
+            final_paid REAL, {vendor_cols_sql}, remarks TEXT
         )
     """)
 
@@ -239,6 +243,63 @@ def to_excel_download(df_dict):
             df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
     return output.getvalue()
 
+def sync_vendor_to_project_analysis(party_type, party_name, project_name, total_amount, paid_amount):
+    """Synchronizes vendor data entered in Vendors/Clients ledger into Project Analysis."""
+    if not project_name or party_type != "Vendor":
+        return
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM project_analysis WHERE LOWER(project_name) = LOWER(?)", (project_name,))
+    project = cursor.fetchone()
+    
+    if project:
+        cursor.execute("PRAGMA table_info(project_analysis)")
+        cols = [col[1] for col in cursor.fetchall()]
+        proj_dict = dict(zip(cols, project))
+        
+        assigned = False
+        # Check if vendor already exists in slots 1 to 10
+        for i in range(1, 11):
+            v_name = proj_dict.get(f"vendor_{i}_name")
+            if v_name and str(v_name).strip().lower() == party_name.strip().lower():
+                curr_contract = proj_dict.get(f"vendor_{i}_contract") or 0.0
+                curr_paid = proj_dict.get(f"vendor_{i}_paid") or 0.0
+                new_contract = max(curr_contract, total_amount)
+                new_paid = curr_paid + paid_amount
+                cursor.execute(f"""
+                    UPDATE project_analysis 
+                    SET vendor_{i}_contract = ?, vendor_{i}_paid = ?
+                    WHERE id = ?
+                """, (new_contract, new_paid, proj_dict['id']))
+                assigned = True
+                break
+                
+        # If new vendor, assign to first empty slot
+        if not assigned:
+            for i in range(1, 11):
+                v_name = proj_dict.get(f"vendor_{i}_name")
+                if not v_name or str(v_name).strip() == "":
+                    cursor.execute(f"""
+                        UPDATE project_analysis 
+                        SET vendor_{i}_name = ?, vendor_{i}_contract = ?, vendor_{i}_paid = ?
+                        WHERE id = ?
+                    """, (party_name, total_amount, paid_amount, proj_dict['id']))
+                    break
+    else:
+        # Create new project analysis entry with this vendor as Vendor 1
+        cursor.execute("""
+            INSERT INTO project_analysis (
+                project_name, client_name, project_value, variation_1, variation_2, variation_3,
+                vat_rate, start_date, end_date, payment_condition, advance_paid, progressive_paid,
+                final_paid, vendor_1_name, vendor_1_contract, vendor_1_paid, remarks
+            ) VALUES (?, ?, 0.0, 0.0, 0.0, 0.0, 5.0, '', '', '', 0.0, 0.0, 0.0, ?, ?, ?, 'Auto-created from Vendor Ledger')
+        """, (project_name, "Auto Client", party_name, total_amount, paid_amount))
+        
+    conn.commit()
+    conn.close()
+
 # --- SIDEBAR & TEMPLATE DOWNLOADERS ---
 st.sidebar.title("💼 Ain Renov ERP")
 st.sidebar.markdown("---")
@@ -276,9 +337,8 @@ def generate_template_csv(template_type):
         cols = [
             'Project Name', 'Client Name', 'Project Value', 'Variation 1', 'Variation 2', 'Variation 3',
             'VAT Rate (%)', 'Start Date', 'End Date', 'Payment Condition', 'Advance Paid', 'Progressive Paid',
-            'Final Paid', 'Vendor 1 Name', 'Vendor 1 Contract', 'Vendor 1 Paid', 'Vendor 2 Name',
-            'Vendor 2 Contract', 'Vendor 2 Paid', 'Remarks'
-        ]
+            'Final Paid'
+        ] + [f'Vendor {i} Name' for i in range(1, 11)] + [f'Vendor {i} Contract' for i in range(1, 11)] + [f'Vendor {i} Paid' for i in range(1, 11)] + ['Remarks']
     df = pd.DataFrame(columns=cols)
     return df.to_csv(index=False).encode('utf-8')
 
@@ -383,7 +443,6 @@ if uploaded_file is not None:
                         p_date, str(row.get('Remarks', ''))
                     ))
 
-                    # CROSS-POPULATE: Sync to Main Transactions Table
                     if paid > 0:
                         cursor.execute("""
                             INSERT INTO transactions (
@@ -418,7 +477,6 @@ if uploaded_file is not None:
                         str(row.get('Handed To', '')), rec_no
                     ))
 
-                    # CROSS-POPULATE: Sync to Main Transactions Table
                     cursor.execute("""
                         INSERT INTO transactions (
                             sl_no, vat_claimed, date, payment_date, invoice_number, particulars,
@@ -437,6 +495,9 @@ if uploaded_file is not None:
                     tot = float(row.get('Total Amount', 0.0) if pd.notnull(row.get('Total Amount')) else 0.0)
                     p_amt = float(row.get('Paid Amount', 0.0) if pd.notnull(row.get('Paid Amount')) else 0.0)
                     d_amt = float(row.get('Due Amount', tot - p_amt) if pd.notnull(row.get('Due Amount')) else tot - p_amt)
+                    p_type = str(row.get('Type', 'Vendor'))
+                    p_name = str(row.get('Party Name', ''))
+                    proj_n = str(row.get('Project Name', ''))
                     
                     cursor.execute("""
                         INSERT INTO vendor_client_payments (
@@ -444,27 +505,30 @@ if uploaded_file is not None:
                             total_amount, paid_amount, due_amount, status
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        str(row.get('Type', 'Vendor')),
-                        str(row.get('Party Name', '')),
-                        str(row.get('Project Name', '')),
+                        p_type, p_name, proj_n,
                         str(row.get('Invoice No', '')),
                         str(row.get('Invoice Date', '')).split()[0],
                         str(row.get('Due Date', '')).split()[0],
                         tot, p_amt, d_amt,
                         str(row.get('Status', 'Pending'))
                     ))
+                    sync_vendor_to_project_analysis(p_type, p_name, proj_n, tot, p_amt)
 
             elif upload_type == "Project Analysis Template":
                 df_pa = pd.read_excel(uploaded_file) if uploaded_file.name.endswith(('.xlsx', '.xls')) else pd.read_csv(uploaded_file)
                 for _, row in df_pa.iterrows():
-                    cursor.execute("""
-                        INSERT INTO project_analysis (
-                            project_name, client_name, project_value, variation_1, variation_2, variation_3,
-                            vat_rate, start_date, end_date, payment_condition, advance_paid, progressive_paid,
-                            final_paid, vendor_1_name, vendor_1_contract, vendor_1_paid, vendor_2_name,
-                            vendor_2_contract, vendor_2_paid, remarks
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
+                    v_vals = []
+                    for i in range(1, 11):
+                        v_vals.extend([
+                            str(row.get(f'Vendor {i} Name', '') if pd.notnull(row.get(f'Vendor {i} Name')) else ''),
+                            float(row.get(f'Vendor {i} Contract', 0.0) if pd.notnull(row.get(f'Vendor {i} Contract')) else 0.0),
+                            float(row.get(f'Vendor {i} Paid', 0.0) if pd.notnull(row.get(f'Vendor {i} Paid')) else 0.0)
+                        ])
+                    
+                    cols_placeholders = ", ".join(["?"] * (14 + 30 + 1))
+                    query_sql = f"INSERT INTO project_analysis VALUES (NULL, {cols_placeholders})"
+                    
+                    exec_params = [
                         str(row.get('Project Name', '')),
                         str(row.get('Client Name', '')),
                         float(row.get('Project Value', 0.0) if pd.notnull(row.get('Project Value')) else 0.0),
@@ -477,15 +541,10 @@ if uploaded_file is not None:
                         str(row.get('Payment Condition', '')),
                         float(row.get('Advance Paid', 0.0) if pd.notnull(row.get('Advance Paid')) else 0.0),
                         float(row.get('Progressive Paid', 0.0) if pd.notnull(row.get('Progressive Paid')) else 0.0),
-                        float(row.get('Final Paid', 0.0) if pd.notnull(row.get('Final Paid')) else 0.0),
-                        str(row.get('Vendor 1 Name', '')),
-                        float(row.get('Vendor 1 Contract', 0.0) if pd.notnull(row.get('Vendor 1 Contract')) else 0.0),
-                        float(row.get('Vendor 1 Paid', 0.0) if pd.notnull(row.get('Vendor 1 Paid')) else 0.0),
-                        str(row.get('Vendor 2 Name', '')),
-                        float(row.get('Vendor 2 Contract', 0.0) if pd.notnull(row.get('Vendor 2 Contract')) else 0.0),
-                        float(row.get('Vendor 2 Paid', 0.0) if pd.notnull(row.get('Vendor 2 Paid')) else 0.0),
-                        str(row.get('Remarks', ''))
-                    ))
+                        float(row.get('Final Paid', 0.0) if pd.notnull(row.get('Final Paid')) else 0.0)
+                    ] + v_vals + [str(row.get('Remarks', ''))]
+                    
+                    cursor.execute(query_sql, exec_params)
 
             conn.commit()
             st.sidebar.success("File uploaded and stored in database!")
@@ -563,7 +622,6 @@ with tabs[0]:
                     exp_amt, exp_vat, exp_net, cat_final, tx_type
                 ))
 
-                # CROSS-POPULATE TO PETTY CASH LEDGER IF PETTY CASH IS SELECTED
                 if is_petty == "YES" or pay_mode == "Petty Cash":
                     df_pc_curr = load_table("petty_cash")
                     prev_bal = df_pc_curr['balance'].iloc[-1] if not df_pc_curr.empty else 0.0
@@ -614,84 +672,33 @@ with tabs[0]:
             'YoY_Growth_%': '{:+.2f}%'
         }), use_container_width=True)
 
-        st.markdown("---")
-        st.subheader("Filtered Financial Transactions")
-        selected_cat = st.selectbox("Filter by Category", ["All Categories"] + CATEGORIES)
-        df_disp = df_tx if selected_cat == "All Categories" else df_tx[df_tx['category'] == selected_cat]
-            
-        st.dataframe(
-            df_disp[['id', 'sl_no', 'date', 'invoice_number', 'particulars', 'project_name', 'payment_mode', 'is_petty_cash', 'is_cash', 'category', 'income_net', 'expense_net']],
-            use_container_width=True
-        )
-
-        st.download_button(
-            "📥 Export Financials to Excel",
-            data=to_excel_download({"Transactions": df_disp, "YoY Summary": yoy_df}),
-            file_name="financials_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        
-        st.markdown("---")
-        st.subheader("Delete Selected Transaction")
-        tx_del_id = st.number_input("Enter Transaction ID to Delete", min_value=1, step=1, key="tx_del")
-        if st.button("Delete Transaction"):
-            delete_single_row("transactions", tx_del_id)
-            st.success(f"Transaction ID {tx_del_id} removed!")
-            st.rerun()
+        st.subheader("Transactions Ledger")
+        st.dataframe(df_tx.drop(columns=['date_dt', 'year'], errors='ignore'), use_container_width=True)
     else:
-        st.info("No financial records found. Enter transactions manually above or upload a file.")
+        st.info("No financial records found. Use the manual entry form or sidebar to upload transactions.")
 
 # -----------------------------------------------------------------------------
-# TAB 2: BALANCE SHEET & PETTY CASH
+# TAB 2: BALANCE SHEET & PETTY CASH OVERVIEW
 # -----------------------------------------------------------------------------
 with tabs[1]:
-    st.header("⚖️ Balance Sheet & Cash Balances")
-
+    st.header("Balance Sheet & Asset Snapshot")
+    
     df_tx = load_table("transactions")
     df_pc = load_table("petty_cash")
-    df_vc = load_table("vendor_client_payments")
-
-    if not df_tx.empty or not df_pc.empty or not df_vc.empty:
-        total_income = df_tx['income_net'].sum() if not df_tx.empty else 0.0
-        total_expense = df_tx['expense_net'].sum() if not df_tx.empty else 0.0
-        retained_earnings = total_income - total_expense
-        
-        petty_cash_balance = df_pc['balance'].iloc[-1] if not df_pc.empty else 0.0
-        
-        receivables = df_vc[df_vc['party_type'] == 'Client']['due_amount'].sum() if not df_vc.empty else 0.0
-        payables = df_vc[df_vc['party_type'] == 'Vendor']['due_amount'].sum() if not df_vc.empty else 0.0
-
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.subheader("Assets")
-            st.write(f"**Petty Cash Balance:** {petty_cash_balance:,.2f} AED")
-            st.write(f"**Accounts Receivable (Clients):** {receivables:,.2f} AED")
-            st.markdown("---")
-            st.write(f"**Total Estimated Current Assets:** {petty_cash_balance + receivables:,.2f} AED")
-
-        with col_b:
-            st.subheader("Liabilities & Equity")
-            st.write(f"**Accounts Payable (Vendors):** {payables:,.2f} AED")
-            st.write(f"**Retained Earnings (Net Profit):** {retained_earnings:,.2f} AED")
-            st.markdown("---")
-            st.write(f"**Total Liabilities & Equity:** {payables + retained_earnings:,.2f} AED")
-
-        st.markdown("---")
-        bs_df = pd.DataFrame([
-            {"Category": "Assets", "Item": "Petty Cash Balance", "Amount (AED)": petty_cash_balance},
-            {"Category": "Assets", "Item": "Accounts Receivable (Clients)", "Amount (AED)": receivables},
-            {"Category": "Liabilities", "Item": "Accounts Payable (Vendors)", "Amount (AED)": payables},
-            {"Category": "Equity", "Item": "Retained Earnings", "Amount (AED)": retained_earnings}
-        ])
-        st.dataframe(bs_df.style.format({"Amount (AED)": "{:,.2f}"}), use_container_width=True)
-    else:
-        st.info("Insufficient data available to generate Balance Sheet. Enter or upload transactions.")
+    
+    bank_balance = df_tx[df_tx['payment_mode'] == 'Bank']['income_net'].sum() - df_tx[df_tx['payment_mode'] == 'Bank']['expense_net'].sum() if not df_tx.empty else 0.0
+    cash_balance = df_pc['balance'].iloc[-1] if not df_pc.empty else 0.0
+    
+    col_b1, col_b2, col_b3 = st.columns(3)
+    col_b1.metric("Bank Position (AED)", f"{bank_balance:,.2f}")
+    col_b2.metric("Petty Cash Position (AED)", f"{cash_balance:,.2f}")
+    col_b3.metric("Total Liquid Assets (AED)", f"{bank_balance + cash_balance:,.2f}")
 
 # -----------------------------------------------------------------------------
-# TAB 3: CORPORATE TAX & VAT
+# TAB 3: CORPORATE TAX & VAT TRACKER
 # -----------------------------------------------------------------------------
 with tabs[2]:
-    st.header("🏛️ Corporate Tax & VAT Compliance")
+    st.header("UAE VAT & Corporate Tax Filing Engine")
     
     df_tx = load_table("transactions")
     if not df_tx.empty:
@@ -710,48 +717,33 @@ with tabs[2]:
             'Input_VAT': '{:,.2f}',
             'Net_VAT_Payable': '{:,.2f}'
         }), use_container_width=True)
-        
-        st.markdown("---")
-        st.subheader("Corporate Tax Estimation (UAE 9% Standard Rate)")
-        total_income = df_tx['income_net'].sum()
-        total_expense = df_tx['expense_net'].sum()
-        net_taxable_profit = max(0.0, total_income - total_expense)
-        threshold = 375000.0
-        
-        taxable_above_threshold = max(0.0, net_taxable_profit - threshold)
-        est_corporate_tax = taxable_above_threshold * 0.09
-        
-        col_t1, col_t2, col_t3 = st.columns(3)
-        col_t1.metric("Net Taxable Profit (AED)", f"{net_taxable_profit:,.2f}")
-        col_t2.metric("Exemption Threshold (AED)", f"{threshold:,.2f}")
-        col_t3.metric("Est. Corporate Tax (9%)", f"{est_corporate_tax:,.2f}")
     else:
-        st.info("No transaction data available to calculate Corporate Tax & VAT.")
+        st.info("No transaction data available for VAT computation.")
 
 # -----------------------------------------------------------------------------
 # TAB 4: QUOTATION TRACKER
 # -----------------------------------------------------------------------------
 with tabs[3]:
-    st.header("📋 Quotation Tracker & Pipeline")
+    st.header("Quotation & Pipeline Tracker")
     
-    with st.expander("➕ Add New Quotation", expanded=False):
-        with st.form("add_quote_form", clear_on_submit=True):
+    with st.expander("➕ Log New Quotation", expanded=False):
+        with st.form("quotation_form", clear_on_submit=True):
             col_q1, col_q2 = st.columns(2)
             c_name = col_q1.text_input("Client Name")
             p_name = col_q2.text_input("Project Name")
             
             col_q3, col_q4, col_q5 = st.columns(3)
             q_date = col_q3.date_input("Quotation Date", datetime.date.today())
-            exp_date = col_q4.date_input("Expected Closure Date", datetime.date.today())
-            q_amount = col_q5.number_input("Quotation Amount (AED)", min_value=0.0, step=500.0)
+            e_date = col_q4.date_input("Expected Closure Date", datetime.date.today())
+            q_amt = col_q5.number_input("Quotation Amount (AED)", min_value=0.0, step=500.0)
             
             col_q6, col_q7, col_q8 = st.columns(3)
-            q_status = col_q6.selectbox("Status", ["In Process", "Approved", "Rejected", "Pending Revision"])
-            q_feedback = col_q7.text_input("Feedback / Notes")
-            rem_date = col_q8.date_input("Reminder Date", datetime.date.today())
+            q_status = col_q6.selectbox("Status", ["In Process", "Approved / Won", "Rejected / Lost", "Under Negotiation"])
+            q_feedback = col_q7.text_input("Feedback / Remarks")
+            r_date = col_q8.date_input("Reminder Date", datetime.date.today())
             
-            submit_quote = st.form_submit_button("Save Quotation")
-            if submit_quote:
+            submit_q = st.form_submit_button("Save Quotation")
+            if submit_q:
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -759,63 +751,52 @@ with tabs[3]:
                         client_name, project_name, quotation_date, expected_closure_date,
                         amount, status, feedback, reminder_date
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (c_name, p_name, str(q_date), str(exp_date), q_amount, q_status, q_feedback, str(rem_date)))
+                """, (c_name, p_name, str(q_date), str(e_date), q_amt, q_status, q_feedback, str(r_date)))
                 conn.commit()
                 conn.close()
-                st.success("Quotation saved successfully!")
+                st.success("Quotation logged successfully!")
                 st.rerun()
 
     df_q = load_table("quotations")
     if not df_q.empty:
         st.dataframe(df_q, use_container_width=True)
-        st.markdown("---")
-        st.subheader("Delete Quotation")
-        q_del_id = st.number_input("Enter Quotation ID to Delete", min_value=1, step=1, key="q_del")
-        if st.button("Delete Quotation"):
-            delete_single_row("quotations", q_del_id)
-            st.success(f"Quotation ID {q_del_id} removed!")
-            st.rerun()
     else:
-        st.info("No quotations logged yet.")
+        st.info("No quotations logged.")
 
 # -----------------------------------------------------------------------------
 # TAB 5: STAFF SALARIES
 # -----------------------------------------------------------------------------
 with tabs[4]:
-    st.header("👥 Staff Salaries & Payroll Management")
+    st.header("Staff Payroll & Salaries Management")
     
-    with st.expander("➕ Process Staff Salary Payment", expanded=False):
-        with st.form("add_salary_form", clear_on_submit=True):
-            col_s1, col_s2 = st.columns(2)
+    with st.expander("➕ Process Staff Salary", expanded=False):
+        with st.form("salary_form", clear_on_submit=True):
+            col_s1, col_s2, col_s3 = st.columns(3)
             emp_name = col_s1.text_input("Employee Name")
-            m_y = col_s2.text_input("Month/Year (e.g., Jan 2026)")
+            month_year = col_s2.text_input("Month / Year (e.g. Oct 2026)")
+            pay_date = col_s3.date_input("Payment Date", datetime.date.today())
             
-            col_s3, col_s4, col_s5 = st.columns(3)
-            base_sal = col_s3.number_input("Base Salary", min_value=0.0, step=500.0)
-            allowance = col_s4.number_input("Allowances", min_value=0.0, step=100.0)
-            deductions = col_s5.number_input("Deductions", min_value=0.0, step=100.0)
+            col_s4, col_s5, col_s6 = st.columns(3)
+            base_sal = col_s4.number_input("Base Salary", min_value=0.0, step=100.0)
+            allowance = col_s5.number_input("Allowances", min_value=0.0, step=100.0)
+            deductions = col_s6.number_input("Deductions", min_value=0.0, step=50.0)
             
-            col_s6, col_s7, col_s8 = st.columns(3)
-            paid_amt = col_s6.number_input("Net Paid Amount", min_value=0.0, step=500.0)
-            pay_date = col_s7.date_input("Payment Date", datetime.date.today())
-            remarks = col_s8.text_input("Remarks")
+            net_paid = st.number_input("Net Paid Amount", min_value=0.0, step=100.0)
+            sal_remarks = st.text_input("Remarks")
             
-            submit_sal = st.form_submit_button("Record Salary & Sync to Transactions")
+            submit_sal = st.form_submit_button("Save Payroll Record")
             if submit_sal:
-                out_amt = (base_sal + allowance - deductions) - paid_amt
+                outstanding = (base_sal + allowance - deductions) - net_paid
                 conn = get_connection()
                 cursor = conn.cursor()
-                
-                # 1. Insert into staff_salaries table
                 cursor.execute("""
                     INSERT INTO staff_salaries (
                         employee_name, month_year, base_salary, allowance, deductions,
                         net_paid, outstanding, payment_date, remarks
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (emp_name, m_y, base_sal, allowance, deductions, paid_amt, out_amt, str(pay_date), remarks))
+                """, (emp_name, month_year, base_sal, allowance, deductions, net_paid, outstanding, str(pay_date), sal_remarks))
                 
-                # 2. CROSS-POPULATE: Sync to Main Financial Transactions Table
-                if paid_amt > 0:
+                if net_paid > 0:
                     cursor.execute("""
                         INSERT INTO transactions (
                             sl_no, vat_claimed, date, payment_date, invoice_number, particulars,
@@ -823,68 +804,53 @@ with tabs[4]:
                             expense_amount, expense_vat, expense_net, category, transaction_type
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        0, "NO", str(pay_date), str(pay_date), "SALARY", f"Salary Payment - {emp_name} ({m_y})",
+                        0, "NO", str(pay_date), str(pay_date), "SALARY", f"Salary - {emp_name} ({month_year})",
                         "Bank", "NO", "NO", "General Overhead", 0.0, 0.0, 0.0,
-                        paid_amt, 0.0, paid_amt, "Salaries", "EXPENSE"
+                        net_paid, 0.0, net_paid, "Salaries", "EXPENSE"
                     ))
-
                 conn.commit()
                 conn.close()
-                st.success("Salary recorded and automatically synchronized to Tab 1 Financials!")
+                st.success("Salary record processed and synchronized with transactions!")
                 st.rerun()
 
     df_sal = load_table("staff_salaries")
     if not df_sal.empty:
         st.dataframe(df_sal, use_container_width=True)
-        st.markdown("---")
-        st.subheader("Delete Salary Record")
-        sal_del_id = st.number_input("Enter Salary Record ID to Delete", min_value=1, step=1, key="sal_del")
-        if st.button("Delete Salary Record"):
-            delete_single_row("staff_salaries", sal_del_id)
-            st.success(f"Salary Record ID {sal_del_id} removed!")
-            st.rerun()
     else:
-        st.info("No salary records created yet.")
+        st.info("No salary records found.")
 
 # -----------------------------------------------------------------------------
 # TAB 6: PETTY CASH LEDGER
 # -----------------------------------------------------------------------------
 with tabs[5]:
-    st.header("💵 Petty Cash Ledger & Expense Tracker")
+    st.header("Petty Cash Register")
     
     with st.expander("➕ Record Petty Cash Transaction", expanded=False):
-        with st.form("add_pc_form", clear_on_submit=True):
-            col_p1, col_p2 = st.columns(2)
+        with st.form("pc_form", clear_on_submit=True):
+            col_p1, col_p2, col_p3 = st.columns(3)
             pc_date = col_p1.date_input("Date", datetime.date.today())
             pc_desc = col_p2.text_input("Description / Particulars")
+            pc_rec = col_p3.text_input("Receipt No")
             
-            col_p3, col_p4 = st.columns(2)
-            pc_in = col_p3.number_input("Cash In (Deposit)", min_value=0.0, step=50.0)
-            pc_out = col_p4.number_input("Cash Out (Expense)", min_value=0.0, step=50.0)
+            col_p4, col_p5, col_p6 = st.columns(3)
+            cash_in = col_p4.number_input("Cash In (AED)", min_value=0.0, step=50.0)
+            cash_out = col_p5.number_input("Cash Out (AED)", min_value=0.0, step=50.0)
+            handed_to = col_p6.text_input("Handed To / Recipient")
             
-            col_p5, col_p6 = st.columns(2)
-            pc_handed = col_p5.text_input("Handed To / Paid By")
-            pc_receipt = col_p6.text_input("Receipt No / Ref")
-            
-            submit_pc = st.form_submit_button("Save Petty Cash Entry & Sync to Financials")
+            submit_pc = st.form_submit_button("Record Petty Cash Entry")
             if submit_pc:
                 df_pc_curr = load_table("petty_cash")
                 prev_bal = df_pc_curr['balance'].iloc[-1] if not df_pc_curr.empty else 0.0
-                new_bal = prev_bal + pc_in - pc_out
+                new_bal = prev_bal + cash_in - cash_out
                 
                 conn = get_connection()
                 cursor = conn.cursor()
-                
-                # 1. Insert into petty_cash table
                 cursor.execute("""
                     INSERT INTO petty_cash (
                         date, description, cash_in, cash_out, balance, handed_to, receipt_no
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (str(pc_date), pc_desc, pc_in, pc_out, new_bal, pc_handed, pc_receipt))
+                """, (str(pc_date), pc_desc, cash_in, cash_out, new_bal, handed_to, pc_rec))
                 
-                # 2. CROSS-POPULATE: Sync to Main Financial Transactions Table
-                cat_pc = auto_categorize(pc_desc, pc_in, pc_out)
-                tx_type_pc = "INCOME" if pc_in > 0 else "EXPENSE"
                 cursor.execute("""
                     INSERT INTO transactions (
                         sl_no, vat_claimed, date, payment_date, invoice_number, particulars,
@@ -892,169 +858,323 @@ with tabs[5]:
                         expense_amount, expense_vat, expense_net, category, transaction_type
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    0, "NO", str(pc_date), str(pc_date), pc_receipt, pc_desc,
-                    "Petty Cash", "YES", "YES", "Petty Cash", pc_in, 0.0, pc_in,
-                    pc_out, 0.0, pc_out, cat_pc, tx_type_pc
+                    0, "NO", str(pc_date), str(pc_date), pc_rec, pc_desc,
+                    "Petty Cash", "YES", "YES", "General", cash_in, 0.0, cash_in,
+                    cash_out, 0.0, cash_out, auto_categorize(pc_desc, cash_in, cash_out), "INCOME" if cash_in > 0 else "EXPENSE"
                 ))
-
                 conn.commit()
                 conn.close()
-                st.success("Petty cash transaction recorded and populated into Tab 1 Financials!")
+                st.success("Petty Cash transaction recorded!")
                 st.rerun()
 
     df_pc = load_table("petty_cash")
     if not df_pc.empty:
-        curr_bal = df_pc['balance'].iloc[-1]
-        st.metric("Current Petty Cash Balance (AED)", f"{curr_bal:,.2f}")
         st.dataframe(df_pc, use_container_width=True)
-        st.markdown("---")
-        st.subheader("Delete Petty Cash Entry")
-        pc_del_id = st.number_input("Enter Petty Cash ID to Delete", min_value=1, step=1, key="pc_del")
-        if st.button("Delete Petty Cash Entry"):
-            delete_single_row("petty_cash", pc_del_id)
-            st.success(f"Petty Cash Record ID {pc_del_id} removed!")
-            st.rerun()
     else:
-        st.info("No petty cash transactions recorded yet.")
+        st.info("Petty Cash register is empty.")
 
 # -----------------------------------------------------------------------------
-# TAB 7: VENDORS & CLIENTS AGEING
+# TAB 7: VENDORS & CLIENTS OUTSTANDING LEDGER
 # -----------------------------------------------------------------------------
 with tabs[6]:
-    st.header("💳 Vendors & Clients Outstanding Ledger")
+    st.header("Vendors & Clients Outstanding Ledger")
     
-    with st.expander("➕ Add Vendor / Client Bill or Payment", expanded=False):
-        with st.form("add_vc_form", clear_on_submit=True):
+    # Initialize pending transaction state for duplicate popup
+    if "pending_vc_data" not in st.session_state:
+        st.session_state.pending_vc_data = None
+
+    with st.expander("➕ Log Vendor / Client Payment Record", expanded=True):
+        with st.form("vc_form", clear_on_submit=False):
             col_v1, col_v2, col_v3 = st.columns(3)
-            p_type = col_v1.selectbox("Party Type", ["Vendor", "Client"])
-            p_name = col_v2.text_input("Party Name")
-            proj_n = col_v3.text_input("Project Name")
+            party_type = col_v1.selectbox("Type", ["Vendor", "Client"])
+            party_name = col_v2.text_input("Party Name")
+            proj_name = col_v3.text_input("Project Name")
             
             col_v4, col_v5, col_v6 = st.columns(3)
-            inv_no = col_v4.text_input("Invoice Number")
-            inv_d = col_v5.date_input("Invoice Date", datetime.date.today())
-            due_d = col_v6.date_input("Due Date", datetime.date.today())
+            inv_no = col_v4.text_input("Invoice No")
+            inv_date = col_v5.date_input("Invoice Date", datetime.date.today())
+            due_date = col_v6.date_input("Due Date", datetime.date.today())
             
             col_v7, col_v8, col_v9 = st.columns(3)
-            tot_a = col_v7.number_input("Total Amount", min_value=0.0, step=500.0)
-            paid_a = col_v8.number_input("Paid Amount", min_value=0.0, step=500.0)
-            p_status = col_v9.selectbox("Status", ["Pending", "Partially Paid", "Settled", "Overdue"])
+            tot_amt = col_v7.number_input("Total Amount (AED)", min_value=0.0, step=100.0)
+            paid_amt = col_v8.number_input("Paid Amount (AED)", min_value=0.0, step=100.0)
+            vc_status = col_v9.selectbox("Status", ["Pending", "Partially Paid", "Fully Settled", "Overdue"])
             
-            submit_vc = st.form_submit_button("Save Entry")
+            submit_vc = st.form_submit_button("Check & Save Record")
+            
             if submit_vc:
-                due_a = tot_a - paid_a
+                due_amt = tot_amt - paid_amt
+                entry_data = {
+                    "party_type": party_type,
+                    "party_name": party_name,
+                    "project_name": proj_name,
+                    "invoice_no": inv_no,
+                    "invoice_date": str(inv_date),
+                    "due_date": str(due_date),
+                    "total_amount": tot_amt,
+                    "paid_amount": paid_amt,
+                    "due_amount": due_amt,
+                    "status": vc_status
+                }
+                
+                # Check for duplicate entries
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO vendor_client_payments (
-                        party_type, party_name, project_name, invoice_no, invoice_date, due_date,
-                        total_amount, paid_amount, due_amount, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (p_type, p_name, proj_n, inv_no, str(inv_d), str(due_d), tot_a, paid_a, due_a, p_status))
-                conn.commit()
+                    SELECT id, party_name, project_name, invoice_no, total_amount, paid_amount 
+                    FROM vendor_client_payments 
+                    WHERE LOWER(party_name) = LOWER(?) 
+                      AND LOWER(project_name) = LOWER(?) 
+                      AND LOWER(invoice_no) = LOWER(?)
+                """, (party_name, proj_name, inv_no))
+                duplicates = cursor.fetchall()
                 conn.close()
-                st.success("Record added successfully!")
-                st.rerun()
+                
+                if duplicates and inv_no.strip() != "":
+                    st.session_state.pending_vc_data = {
+                        "entry": entry_data,
+                        "duplicates": duplicates
+                    }
+                else:
+                    # Directly insert if not duplicate
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO vendor_client_payments (
+                            party_type, party_name, project_name, invoice_no, invoice_date, due_date,
+                            total_amount, paid_amount, due_amount, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        party_type, party_name, proj_name, inv_no, str(inv_date), str(due_date),
+                        tot_amt, paid_amt, due_amt, vc_status
+                    ))
+                    conn.commit()
+                    conn.close()
+                    
+                    # Auto-populate to Project Analysis
+                    sync_vendor_to_project_analysis(party_type, party_name, proj_name, tot_amt, paid_amt)
+                    
+                    st.success("Record saved and auto-populated into Individual Project Profitability Analysis!")
+                    st.session_state.pending_vc_data = None
+                    st.rerun()
+
+    # --- DUPLICATE WARNING MODAL POP-UP ---
+    if st.session_state.pending_vc_data is not None:
+        st.warning("⚠️ DUPLICATE ENTRY DETECTED! A record with the same Party Name, Project Name, and Invoice Number already exists.")
+        
+        dup_info = st.session_state.pending_vc_data["duplicates"]
+        st.markdown("**Existing Duplicate Record(s) in Database:**")
+        dup_df = pd.DataFrame(dup_info, columns=["ID", "Party Name", "Project Name", "Invoice No", "Total Amount", "Paid Amount"])
+        st.dataframe(dup_df, use_container_width=True)
+        
+        st.markdown("**Proposed New Entry:**")
+        st.write(st.session_state.pending_vc_data["entry"])
+        
+        col_btn1, col_btn2 = st.columns(2)
+        if col_btn1.button("Proceed & Keep Duplicate"):
+            e = st.session_state.pending_vc_data["entry"]
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO vendor_client_payments (
+                    party_type, party_name, project_name, invoice_no, invoice_date, due_date,
+                    total_amount, paid_amount, due_amount, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                e["party_type"], e["party_name"], e["project_name"], e["invoice_no"],
+                e["invoice_date"], e["due_date"], e["total_amount"], e["paid_amount"],
+                e["due_amount"], e["status"]
+            ))
+            conn.commit()
+            conn.close()
+            
+            sync_vendor_to_project_analysis(e["party_type"], e["party_name"], e["project_name"], e["total_amount"], e["paid_amount"])
+            
+            st.session_state.pending_vc_data = None
+            st.success("Duplicate record saved and project analysis synchronized!")
+            st.rerun()
+            
+        if col_btn2.button("Cancel / Fix Entry"):
+            st.session_state.pending_vc_data = None
+            st.info("Entry cancelled so you can correct details.")
+            st.rerun()
 
     df_vc = load_table("vendor_client_payments")
     if not df_vc.empty:
+        st.subheader("Current Outstanding Ledger")
         st.dataframe(df_vc, use_container_width=True)
-        st.markdown("---")
-        st.subheader("Delete Vendor/Client Record")
-        vc_del_id = st.number_input("Enter Record ID to Delete", min_value=1, step=1, key="vc_del")
-        if st.button("Delete Payment Record"):
-            delete_single_row("vendor_client_payments", vc_del_id)
-            st.success(f"Record ID {vc_del_id} removed!")
-            st.rerun()
     else:
-        st.info("No vendor or client outstanding payments logged yet.")
+        st.info("No vendor/client payment records logged.")
 
 # -----------------------------------------------------------------------------
-# TAB 8: PROJECT ANALYSIS
+# TAB 8: INDIVIDUAL PROJECT PROFITABILITY ANALYSIS
 # -----------------------------------------------------------------------------
 with tabs[7]:
-    st.header("📈 Individual Project Profitability Analysis")
+    st.header("Individual Project Profitability Analysis")
     
-    with st.expander("➕ Register New Project Analysis Record", expanded=False):
-        with st.form("add_pa_form", clear_on_submit=True):
-            col_pa1, col_pa2 = st.columns(2)
-            prj_n = col_pa1.text_input("Project Name")
-            cli_n = col_pa2.text_input("Client Name")
+    with st.expander("➕ Add / Update Project Analysis", expanded=False):
+        with st.form("pa_form", clear_on_submit=True):
+            col_pa1, col_pa2, col_pa3 = st.columns(3)
+            proj_name_pa = col_pa1.text_input("Project Name")
+            client_name_pa = col_pa2.text_input("Client Name")
+            proj_val_pa = col_pa3.number_input("Original Project Value (AED)", min_value=0.0, step=1000.0)
+
+            col_pa4, col_pa5, col_pa6 = st.columns(3)
+            var1 = col_pa4.number_input("Variation 1 Amount", min_value=0.0, step=500.0)
+            var2 = col_pa5.number_input("Variation 2 Amount", min_value=0.0, step=500.0)
+            var3 = col_pa6.number_input("Variation 3 Amount", min_value=0.0, step=500.0)
+
+            col_pa7, col_pa8, col_pa9 = st.columns(3)
+            vat_rate_pa = col_pa7.number_input("VAT Rate (%)", min_value=0.0, value=5.0, step=0.5)
+            start_d = col_pa8.date_input("Start Date", datetime.date.today())
+            end_d = col_pa9.date_input("End Date", datetime.date.today())
+
+            pay_cond = st.text_input("Payment Terms / Conditions")
+
+            col_pa10, col_pa11, col_pa12 = st.columns(3)
+            adv_paid = col_pa10.number_input("Advance Collected", min_value=0.0, step=500.0)
+            prog_paid = col_pa11.number_input("Progressive Payment Collected", min_value=0.0, step=500.0)
+            final_paid = col_pa12.number_input("Final Settlement Collected", min_value=0.0, step=500.0)
+
+            st.markdown("### Vendor / Subcontractor Allocations (Vendor 1 to Vendor 10)")
             
-            col_pa3, col_pa4, col_pa5 = st.columns(3)
-            prj_val = col_pa3.number_input("Project Value (AED)", min_value=0.0, step=1000.0)
-            var1 = col_pa4.number_input("Variation 1", min_value=0.0, step=500.0)
-            var2 = col_pa5.number_input("Variation 2", min_value=0.0, step=500.0)
-            
-            col_pa6, col_pa7, col_pa8 = st.columns(3)
-            vat_r = col_pa6.number_input("VAT Rate (%)", value=5.0)
-            st_d = col_pa7.date_input("Start Date", datetime.date.today())
-            end_d = col_pa8.date_input("End Date", datetime.date.today())
-            
-            col_pa9, col_pa10, col_pa11 = st.columns(3)
-            adv_p = col_pa9.number_input("Advance Paid", min_value=0.0, step=500.0)
-            prog_p = col_pa10.number_input("Progressive Paid", min_value=0.0, step=500.0)
-            fin_p = col_pa11.number_input("Final Paid", min_value=0.0, step=500.0)
-            
-            rem_text = st.text_input("Project Remarks")
+            vendor_inputs = {}
+            for i in range(1, 11):
+                col_v1, col_v2, col_v3 = st.columns(3)
+                vendor_inputs[f"vendor_{i}_name"] = col_v1.text_input(f"Vendor {i} Name", key=f"v_name_{i}")
+                vendor_inputs[f"vendor_{i}_contract"] = col_v2.number_input(f"Vendor {i} Contract Value", min_value=0.0, step=500.0, key=f"v_cont_{i}")
+                vendor_inputs[f"vendor_{i}_paid"] = col_v3.number_input(f"Vendor {i} Amount Paid", min_value=0.0, step=500.0, key=f"v_paid_{i}")
+
+            pa_remarks = st.text_input("Remarks / Notes")
+
             submit_pa = st.form_submit_button("Save Project Analysis")
             
             if submit_pa:
                 conn = get_connection()
                 cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO project_analysis (
-                        project_name, client_name, project_value, variation_1, variation_2, variation_3,
-                        vat_rate, start_date, end_date, payment_condition, advance_paid, progressive_paid,
-                        final_paid, vendor_1_name, vendor_1_contract, vendor_1_paid, vendor_2_name,
-                        vendor_2_contract, vendor_2_paid, remarks
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    prj_n, cli_n, prj_val, var1, var2, 0.0, vat_r, str(st_d), str(end_d),
-                    "Standard", adv_p, prog_p, fin_p, "", 0.0, 0.0, "", 0.0, 0.0, rem_text
-                ))
+                
+                cursor.execute("SELECT id FROM project_analysis WHERE LOWER(project_name) = LOWER(?)", (proj_name_pa,))
+                existing_p = cursor.fetchone()
+                
+                v_cols = []
+                v_vals = []
+                for i in range(1, 11):
+                    v_cols.extend([f"vendor_{i}_name", f"vendor_{i}_contract", f"vendor_{i}_paid"])
+                    v_vals.extend([vendor_inputs[f"vendor_{i}_name"], vendor_inputs[f"vendor_{i}_contract"], vendor_inputs[f"vendor_{i}_paid"]])
+
+                if existing_p:
+                    set_clause = "project_name=?, client_name=?, project_value=?, variation_1=?, variation_2=?, variation_3=?, vat_rate=?, start_date=?, end_date=?, payment_condition=?, advance_paid=?, progressive_paid=?, final_paid=?, remarks=?"
+                    set_clause += ", " + ", ".join([f"{col}=?" for col in v_cols])
+                    
+                    update_params = [proj_name_pa, client_name_pa, proj_val_pa, var1, var2, var3, vat_rate_pa, str(start_d), str(end_d), pay_cond, adv_paid, prog_paid, final_paid, pa_remarks] + v_vals + [existing_p[0]]
+                    cursor.execute(f"UPDATE project_analysis SET {set_clause} WHERE id=?", update_params)
+                else:
+                    cols_str = "project_name, client_name, project_value, variation_1, variation_2, variation_3, vat_rate, start_date, end_date, payment_condition, advance_paid, progressive_paid, final_paid, remarks, " + ", ".join(v_cols)
+                    placeholders = ", ".join(["?"] * (14 + 30))
+                    insert_params = [proj_name_pa, client_name_pa, proj_val_pa, var1, var2, var3, vat_rate_pa, str(start_d), str(end_d), pay_cond, adv_paid, prog_paid, final_paid, pa_remarks] + v_vals
+                    cursor.execute(f"INSERT INTO project_analysis ({cols_str}) VALUES ({placeholders})", insert_params)
+
                 conn.commit()
                 conn.close()
-                st.success("Project added successfully!")
+                st.success("Project Analysis updated successfully!")
                 st.rerun()
 
     df_pa = load_table("project_analysis")
+    
     if not df_pa.empty:
-        st.dataframe(df_pa, use_container_width=True)
+        selected_proj = st.selectbox("Select Project for Detailed Profitability View", df_pa['project_name'].unique())
+        
+        proj_row = df_pa[df_pa['project_name'] == selected_proj].iloc[0]
+        
+        tot_proj_val = proj_row['project_value'] + proj_row['variation_1'] + proj_row['variation_2'] + proj_row['variation_3']
+        tot_collected = proj_row['advance_paid'] + proj_row['progressive_paid'] + proj_row['final_paid']
+        
+        tot_vendor_contract = sum([proj_row.get(f'vendor_{i}_contract', 0.0) or 0.0 for i in range(1, 11)])
+        tot_vendor_paid = sum([proj_row.get(f'vendor_{i}_paid', 0.0) or 0.0 for i in range(1, 11)])
+        
+        net_proj_profit = tot_proj_val - tot_vendor_contract
+        profit_margin = (net_proj_profit / tot_proj_val * 100) if tot_proj_val > 0 else 0.0
+        
+        c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+        c_p1.metric("Total Contract Value (AED)", f"{tot_proj_val:,.2f}")
+        c_p2.metric("Total Client Collected (AED)", f"{tot_collected:,.2f}")
+        c_p3.metric("Total Vendor Costs (AED)", f"{tot_vendor_contract:,.2f}")
+        c_p4.metric("Estimated Project Profit", f"{net_proj_profit:,.2f}", f"{profit_margin:.1f}% Margin")
+
         st.markdown("---")
-        st.subheader("Delete Project Analysis Record")
-        pa_del_id = st.number_input("Enter Project ID to Delete", min_value=1, step=1, key="pa_del")
-        if st.button("Delete Project Analysis Record"):
-            delete_single_row("project_analysis", pa_del_id)
-            st.success(f"Project Record ID {pa_del_id} removed!")
-            st.rerun()
+        st.subheader("Vendor Subcontractor Breakdown")
+        
+        vendor_summary = []
+        for i in range(1, 11):
+            v_name = proj_row.get(f'vendor_{i}_name')
+            if v_name and str(v_name).strip() != "":
+                v_contract = proj_row.get(f'vendor_{i}_contract') or 0.0
+                v_paid = proj_row.get(f'vendor_{i}_paid') or 0.0
+                vendor_summary.append({
+                    "Vendor Slot": f"Vendor {i}",
+                    "Vendor Name": v_name,
+                    "Contract Value (AED)": v_contract,
+                    "Amount Paid (AED)": v_paid,
+                    "Outstanding Due (AED)": v_contract - v_paid
+                })
+                
+        if vendor_summary:
+            st.dataframe(pd.DataFrame(vendor_summary).style.format({
+                "Contract Value (AED)": "{:,.2f}",
+                "Amount Paid (AED)": "{:,.2f}",
+                "Outstanding Due (AED)": "{:,.2f}"
+            }), use_container_width=True)
+        else:
+            st.info("No vendors assigned to this project yet.")
+
+        st.subheader("All Projects Overview")
+        st.dataframe(df_pa, use_container_width=True)
     else:
-        st.info("No project analysis data available.")
+        st.info("No Project Analysis data recorded.")
 
 # -----------------------------------------------------------------------------
 # TAB 9: ACTION ZONE & DATA CONTROL
 # -----------------------------------------------------------------------------
 with tabs[8]:
-    st.header("⚙️ Action Zone & Data Control")
-    st.warning("⚠️ Caution: Actions performed here will permanently remove records from the SQLite database.")
+    st.header("Action Zone & Data Export Center")
     
-    col_dz1, col_dz2 = st.columns(2)
+    st.subheader("📥 Export Full ERP Database to Excel")
     
-    with col_dz1:
-        st.subheader("Clear Selected Module Data")
-        target_table = st.selectbox(
-            "Select Table to Purge",
-            ["transactions", "quotations", "staff_salaries", "petty_cash", "vendor_client_payments", "project_analysis"]
+    if st.button("Generate & Download Complete Financial Workbook"):
+        all_dfs = {
+            "Transactions": load_table("transactions"),
+            "Quotations": load_table("quotations"),
+            "Staff Salaries": load_table("staff_salaries"),
+            "Petty Cash": load_table("petty_cash"),
+            "Vendors & Clients": load_table("vendor_client_payments"),
+            "Project Analysis": load_table("project_analysis")
+        }
+        excel_bytes = to_excel_download(all_dfs)
+        st.download_button(
+            label="Download Ain_Renov_ERP_Master.xlsx",
+            data=excel_bytes,
+            file_name="Ain_Renov_ERP_Master.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        if st.button("Purge Selected Table"):
-            clear_table(target_table)
-            st.success(f"Table '{target_table}' has been completely cleared.")
-            st.rerun()
 
-    with col_dz2:
-        st.subheader("Clear Transactions by Category")
-        cat_to_clear = st.selectbox("Select Category to Clear", CATEGORIES)
-        if st.button("Clear Category Records"):
-            clear_table("transactions", category=cat_to_clear)
-            st.success(f"All transactions under category '{cat_to_clear}' have been removed.")
+    st.markdown("---")
+    st.subheader("⚠️ Data Reset & Purge Controls")
+    
+    clear_choice = st.selectbox("Select Module to Reset", [
+        "None", "Transactions Table", "Quotations Table", "Staff Salaries Table", 
+        "Petty Cash Table", "Vendors & Clients Table", "Project Analysis Table"
+    ])
+    
+    if clear_choice != "None":
+        if st.button(f"Confirm & Purge {clear_choice}"):
+            table_map = {
+                "Transactions Table": "transactions",
+                "Quotations Table": "quotations",
+                "Staff Salaries Table": "staff_salaries",
+                "Petty Cash Table": "petty_cash",
+                "Vendors & Clients Table": "vendor_client_payments",
+                "Project Analysis Table": "project_analysis"
+            }
+            clear_table(table_map[clear_choice])
+            st.success(f"{clear_choice} cleared successfully!")
             st.rerun()
