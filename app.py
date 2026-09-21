@@ -696,337 +696,143 @@ with tabs[5]:
                 """, (str(pc_date), pc_desc, cash_in, cash_out, new_bal, handed, rec_no))
                 conn.commit()
                 conn.close()
-                st.success("Petty Cash transaction logged!")
+                st.success("Petty cash entry recorded!")
                 st.rerun()
 
     df_pc = load_table("petty_cash")
     if not df_pc.empty:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Cash In", f"{df_pc['cash_in'].sum():,.2f} AED")
+        c2.metric("Total Cash Out", f"{df_pc['cash_out'].sum():,.2f} AED")
+        c3.metric("Current Balance", f"{df_pc['balance'].iloc[-1]:,.2f} AED")
+
         st.dataframe(df_pc, use_container_width=True)
         
         st.markdown("---")
         pc_del_id = st.number_input("Enter Petty Cash ID to Delete", min_value=1, step=1, key="pc_del")
         if st.button("Delete Petty Cash Entry"):
             delete_single_row("petty_cash", pc_del_id)
-            st.success(f"Petty Cash ID {pc_del_id} removed!")
+            st.success(f"Petty cash entry ID {pc_del_id} removed!")
             st.rerun()
+    else:
+        st.info("No petty cash transactions recorded yet.")
 
 # -----------------------------------------------------------------------------
-# TAB 7: VENDORS & CLIENTS AGEING
+# TAB 7: VENDORS & CLIENTS AGEING ANALYSIS
 # -----------------------------------------------------------------------------
 with tabs[6]:
-    st.header("💳 Vendor Payables & Client Receivables Ageing")
-    
+    st.header("💳 Vendors & Clients Ageing Analysis")
+
+    with st.expander("➕ Log Vendor / Client Payment Details"):
+        with st.form("vc_form"):
+            v1, v2 = st.columns(2)
+            party_type = v1.selectbox("Party Type", ["Vendor", "Client"])
+            party_name = v2.text_input("Party Name")
+            inv_no = v1.text_input("Invoice Number")
+            inv_date = v2.date_input("Invoice Date", datetime.date.today())
+            due_date = v1.date_input("Due Date", datetime.date.today() + datetime.timedelta(days=30))
+            tot_amt = v2.number_input("Total Amount (AED)", min_value=0.0)
+            paid_amt = v1.number_input("Paid Amount (AED)", min_value=0.0)
+            status_opt = v2.selectbox("Payment Status", ["Pending", "Partial", "Paid"])
+
+            if st.form_submit_button("Save Payment Record"):
+                due_amt = tot_amt - paid_amt
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO vendor_client_payments (
+                        party_type, party_name, invoice_no, invoice_date, due_date,
+                        total_amount, paid_amount, due_amount, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (party_type, party_name, inv_no, str(inv_date), str(due_date), tot_amt, paid_amt, due_amt, status_opt))
+                conn.commit()
+                conn.close()
+                st.success("Party payment record added!")
+                st.rerun()
+
     df_vc = load_table("vendor_client_payments")
     if not df_vc.empty:
+        # Calculate Ageing Days and Ageing Bucket
         df_vc['due_date_dt'] = pd.to_datetime(df_vc['due_date'], errors='coerce')
         today = pd.to_datetime(datetime.date.today())
-        df_vc['days_overdue'] = (today - df_vc['due_date_dt']).dt.days.fillna(0)
-        
+        df_vc['days_overdue'] = (today - df_vc['due_date_dt']).dt.days.apply(lambda x: x if x > 0 else 0)
+
         def age_bucket(days):
             if days <= 0: return "Current"
             elif days <= 30: return "1-30 Days"
             elif days <= 60: return "31-60 Days"
-            else: return "60+ Days"
-            
+            elif days <= 90: return "61-90 Days"
+            else: return "90+ Days"
+
         df_vc['Ageing_Bucket'] = df_vc['days_overdue'].apply(age_bucket)
-        
-        v1, v2 = st.columns(2)
-        with v1:
-            st.subheader("Client Receivables")
-            st.dataframe(df_vc[df_vc['party_type'] == 'Client'], use_container_width=True)
-        with v2:
-            st.subheader("Vendor Payables")
-            st.dataframe(df_vc[df_vc['party_type'] == 'Vendor'], use_container_width=True)
+
+        v_tab, c_tab = st.tabs(["🚚 Vendor Payables", "🤝 Client Receivables"])
+
+        with v_tab:
+            st.subheader("Vendor Payables Summary")
+            df_v = df_vc[df_vc['party_type'] == 'Vendor']
+            if not df_v.empty:
+                v_tot = df_v['due_amount'].sum()
+                st.metric("Total Payable to Vendors", f"{v_tot:,.2f} AED")
+                st.dataframe(df_v[['id', 'party_name', 'invoice_no', 'due_date', 'total_amount', 'paid_amount', 'due_amount', 'days_overdue', 'Ageing_Bucket', 'status']], use_container_width=True)
+            else:
+                st.info("No vendor payable records available.")
+
+        with c_tab:
+            st.subheader("Client Receivables Summary")
+            df_c = df_vc[df_vc['party_type'] == 'Client']
+            if not df_c.empty:
+                c_tot = df_c['due_amount'].sum()
+                st.metric("Total Receivable from Clients", f"{c_tot:,.2f} AED")
+                st.dataframe(df_c[['id', 'party_name', 'invoice_no', 'due_date', 'total_amount', 'paid_amount', 'due_amount', 'days_overdue', 'Ageing_Bucket', 'status']], use_container_width=True)
+            else:
+                st.info("No client receivable records available.")
+
+        st.markdown("---")
+        vc_del_id = st.number_input("Enter Party Entry ID to Delete", min_value=1, step=1, key="vc_del")
+        if st.button("Delete Party Entry"):
+            delete_single_row("vendor_client_payments", vc_del_id)
+            st.success(f"Entry ID {vc_del_id} removed!")
+            st.rerun()
     else:
-        st.info("No vendor or client payment entries registered.")
+        st.info("No vendor or client payment entries stored in database.")
 
 # -----------------------------------------------------------------------------
 # TAB 8: ACTION ZONE & DATA CONTROL
 # -----------------------------------------------------------------------------
 with tabs[7]:
-    st.header("⚙️ Action Zone: Permanent Data Controls")
-    st.warning("⚠️ These actions permanently delete stored records.")
-    
-    az1, az2 = st.columns(2)
-    
-    with az1:
-        st.subheader("1. Clear Category Financial Data")
-        cat_del = st.selectbox("Select Category to Clear", CATEGORIES, key="az_cat")
-        if st.button(f"Clear All '{cat_del}' Category Records"):
-            clear_table("transactions", category=cat_del)
-            st.success(f"Cleared all '{cat_del}' transaction entries.")
+    st.header("⚙️ Data Control & Administrative Action Zone")
+    st.warning("⚠️ Caution: Actions performed here directly modify the SQLite database.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("🗑️ Selective Data Wiping")
+        clear_target = st.selectbox(
+            "Select Table to Wipe",
+            ["transactions", "quotations", "staff_salaries", "petty_cash", "vendor_client_payments"]
+        )
+        
+        if st.button(f"Clear All Data from '{clear_target}'", type="primary"):
+            clear_table(clear_target)
+            st.success(f"All records from table '{clear_target}' have been permanently deleted.")
             st.rerun()
 
-    with az2:
-        st.subheader("2. Purge Complete Section Tables")
-        target_table = st.selectbox("Select Table Section to Purge", [
-            ("Main Transactions Ledger", "transactions"),
-            ("Quotations", "quotations"),
-            ("Staff Salaries", "staff_salaries"),
-            ("Petty Cash", "petty_cash"),
-            ("Vendor & Client Payments", "vendor_client_payments")
-        ], format_func=lambda x: x[0])
-        
-        if st.button(f"🚨 Clear All Data in {target_table[0]}"):
-            clear_table(target_table[1])
-            st.success(f"Purged all records in {target_table[0]}.")
-            st.rerun()import streamlit as st
-import pandas as pd
-import numpy as np
-import io
-from datetime import datetime
-
-# Streamlit Page Config
-st.set_page_config(
-    page_title="Ain Renov Technical Services - ERP & Financials",
-    page_icon="🏗️",
-    layout="wide"
-)
-
-# Custom Styling
-st.markdown("""
-    <style>
-    .main-header {
-        font-size:26px;
-        font-weight:bold;
-        color:#1E3A8A;
-        margin-bottom:20px;
-    }
-    .metric-card {
-        background-color: #F3F4F6;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 5px solid #1E3A8A;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-st.markdown("<div class='main-header'>Ain Renov Technical Services LLC - Management & Financial ERP</div>", unsafe_allow_html=True)
-
-# ---------------------------------------------------------
-# EXCEL TEMPLATE GENERATOR FIX (Prevents ModuleNotFoundError)
-# ---------------------------------------------------------
-def generate_template_excel(template_type):
-    output = io.BytesIO()
-    # Explicitly using openpyxl engine which is standard in pandas environments
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        if template_type == "Financials":
-            df_projects = pd.DataFrame({
-                'Project ID': ['PRJ-001'],
-                'Site / Client Name': ['Client Alpha'],
-                'Month of Work': ['Jan-2026'],
-                'Project Start Date': ['2026-01-01'],
-                'Project End Date': ['2026-03-31'],
-                'Project Base Value': [100000.0],
-                'VAT %': [5.0],
-                'Variation 1 Amount': [5000.0],
-                'Variation 2 Amount': [0.0],
-                'Variation 3 Amount': [0.0],
-                'Commission Amount': [2000.0]
-            })
-            df_projects.to_excel(writer, sheet_name='Projects', index=False)
-
-            df_client_pmt = pd.DataFrame({
-                'Project ID': ['PRJ-001'],
-                'Invoice Ref': ['INV-101'],
-                'Payment Type': ['Advance Payment'],
-                'Due Date': ['2026-01-15'],
-                'Payment Date': ['2026-01-20'],
-                'Invoiced Amount (Excl VAT)': [20000.0],
-                'VAT %': [5.0],
-                'Amount Received': [21000.0],
-                'Status': ['Received']
-            })
-            df_client_pmt.to_excel(writer, sheet_name='Client_Payments', index=False)
-
-            df_vendor_pmt = pd.DataFrame({
-                'Project ID': ['PRJ-001'],
-                'Vendor Name': ['Vendor A'],
-                'Work Details': ['MEP Subcontract Work'],
-                'Contact Person': ['John Doe'],
-                'Contract Value': [30000.0],
-                'Variation Work 1': [1000.0],
-                'Payment Stage': ['Progressive Payment 1'],
-                'Invoice Ref': ['V-INV-001'],
-                'Due Date': ['2026-02-10'],
-                'Payment Date': [''],
-                'Invoiced Amount': [10000.0],
-                'VAT %': [5.0],
-                'Amount Paid': [0.0],
-                'Status': ['Pending']
-            })
-            df_vendor_pmt.to_excel(writer, sheet_name='Vendor_Payments', index=False)
-
-    return output.getvalue()
-
-# Sidebar Setup
-st.sidebar.title("Navigation & Tools")
-app_mode = st.sidebar.radio("Select Module", [
-    "Project & Financial Tracker",
-    "Vendor & Client Ageing Analysis",
-    "Expense App & Reports"
-])
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Download Templates")
-st.sidebar.download_button(
-    label="Financials Template",
-    data=generate_template_excel("Financials"),
-    file_name="financials_template.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-
-# Initialize Session Data for persistence
-if 'client_invoices' not in st.session_state:
-    st.session_state.client_invoices = pd.DataFrame([
-        {'Project': 'Villa 12 Renovation', 'Client': 'Al Hashimi', 'Invoice Ref': 'INV-001', 'Due Date': '2026-07-01', 'Amount Due (AED)': 25000.0, 'Status': 'Pending'},
-        {'Project': 'Commercial Fitout B', 'Client': 'Retail Corp', 'Invoice Ref': 'INV-002', 'Due Date': '2026-08-15', 'Amount Due (AED)': 52500.0, 'Status': 'Pending'},
-        {'Project': 'Apartment MEP Maintenance', 'Client': 'Emaar Resident', 'Invoice Ref': 'INV-003', 'Due Date': '2026-09-01', 'Amount Due (AED)': 12000.0, 'Status': 'Pending'},
-    ])
-
-if 'vendor_invoices' not in st.session_state:
-    st.session_state.vendor_invoices = pd.DataFrame([
-        {'Project': 'Villa 12 Renovation', 'Vendor': 'HVAC Solutions LLC', 'Invoice Ref': 'VINV-88', 'Due Date': '2026-06-20', 'Amount Due (AED)': 15000.0, 'Status': 'Pending'},
-        {'Project': 'Commercial Fitout B', 'Vendor': 'Glass & Metal Works', 'Invoice Ref': 'VINV-99', 'Due Date': '2026-08-01', 'Amount Due (AED)': 30000.0, 'Status': 'Pending'},
-    ])
-
-# ---------------------------------------------------------
-# MODULE 1: PROJECT & FINANCIAL TRACKER
-# ---------------------------------------------------------
-if app_mode == "Project & Financial Tracker":
-    st.header("Project Financial Entry & Calculations")
-    
-    with st.form("project_financial_form"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            site_name = st.text_input("Site / Project Name", "Villa 45 Maintenance")
-            month_work = st.selectbox("Month of Work", ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
-            proj_val = st.number_input("Base Project Value (Excl. VAT)", min_value=0.0, value=100000.0, step=1000.0)
-            vat_rate = st.selectbox("VAT Rate", [0.05, 0.0], format_func=lambda x: f"{int(x*100)}%")
-            
-        with col2:
-            start_date = st.date_input("Project Start Date")
-            end_date = st.date_input("Project End Date")
-            var_1 = st.number_input("Variation Amount 1", min_value=0.0, value=0.0)
-            var_2 = st.number_input("Variation Amount 2", min_value=0.0, value=0.0)
-            var_3 = st.number_input("Variation Amount 3", min_value=0.0, value=0.0)
-            
-        with col3:
-            st.markdown("**Client Payment Schedule Parameters**")
-            adv_pct = st.slider("Advance Payment %", 0, 100, 10, step=5)
-            prog1_pct = st.slider("Progressive Payment 1 %", 0, 100, 40, step=5)
-            prog2_pct = st.slider("Progressive Payment 2 %", 0, 100, 40, step=5)
-            final_pct = st.slider("Final Payment %", 0, 100, 10, step=5)
-            
-        submitted = st.form_submit_button("Calculate & Summary")
-
-    # Dynamic Calculations
-    total_variations = var_1 + var_2 + var_3
-    total_project_base = proj_val + total_variations
-    vat_amount = total_project_base * vat_rate
-    grand_total_project = total_project_base + vat_amount
-
-    st.subheader("Financial Breakdown")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Base Project Value", f"{proj_val:,.2f} AED")
-    m2.metric("Total Variations", f"{total_variations:,.2f} AED")
-    m3.metric("Total VAT (5%)", f"{vat_amount:,.2f} AED")
-    m4.metric("Grand Total (Inc. VAT)", f"{grand_total_project:,.2f} AED")
-
-# ---------------------------------------------------------
-# MODULE 2: VENDOR & CLIENT AGEING ANALYSIS (NEW SECTION)
-# ---------------------------------------------------------
-elif app_mode == "Vendor & Client Ageing Analysis":
-    st.header("Vendor & Client Ageing Analysis (Receivables & Payables)")
-    
-    today = datetime.now().date()
-    
-    # Helper to compute ageing buckets
-    def calculate_ageing(df):
-        if df.empty:
-            return df
-        
-        df_calc = df.copy()
-        df_calc['Due Date'] = pd.to_datetime(df_calc['Due Date']).dt.date
-        df_calc['Days Overdue'] = df_calc['Due Date'].apply(lambda d: (today - d).days if (today - d).days > 0 else 0)
-        
-        def assign_bucket(days):
-            if days == 0:
-                return 'Current / Not Due'
-            elif 1 <= days <= 30:
-                return '1 - 30 Days'
-            elif 31 <= days <= 60:
-                return '31 - 60 Days'
-            elif 61 <= days <= 90:
-                return '61 - 90 Days'
-            else:
-                return '90+ Days Overdue'
-                
-        df_calc['Ageing Bucket'] = df_calc['Days Overdue'].apply(assign_bucket)
-        return df_calc
-
-    tab1, tab2 = st.tabs(["Client Receivables Ageing", "Vendor Payables Ageing"])
-    
-    with tab1:
-        st.subheader("Client Outstanding Invoices (Receivables)")
-        df_client_ageing = calculate_ageing(st.session_state.client_invoices)
-        
-        st.dataframe(df_client_ageing, use_container_width=True)
-        
-        # Summary Pivot Table
-        if not df_client_ageing.empty:
-            pivot_client = df_client_ageing.pivot_table(
-                index='Client',
-                columns='Ageing Bucket',
-                values='Amount Due (AED)',
-                aggfunc='sum',
-                fill_value=0
-            )
-            st.markdown("### Client Ageing Summary")
-            st.dataframe(pivot_client, use_container_width=True)
-
-    with tab2:
-        st.subheader("Vendor Pending Payments (Payables)")
-        df_vendor_ageing = calculate_ageing(st.session_state.vendor_invoices)
-        
-        st.dataframe(df_vendor_ageing, use_container_width=True)
-        
-        # Summary Pivot Table
-        if not df_vendor_ageing.empty:
-            pivot_vendor = df_vendor_ageing.pivot_table(
-                index='Vendor',
-                columns='Ageing Bucket',
-                values='Amount Due (AED)',
-                aggfunc='sum',
-                fill_value=0
-            )
-            st.markdown("### Vendor Ageing Summary")
-            st.dataframe(pivot_vendor, use_container_width=True)
-
-# ---------------------------------------------------------
-# MODULE 3: EXPENSE APP & REPORTS
-# ---------------------------------------------------------
-elif app_mode == "Expense App & Reports":
-    st.header("Project Expenses & Cost Control")
-    st.info("Log expenses mapped directly to project IDs to maintain accurate project-wise profitability.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Add New Expense")
-        exp_proj = st.text_input("Project ID / Name", "PRJ-001")
-        exp_cat = st.selectbox("Category", ["Materials", "Subcontractor Fee", "Site Equipment", "Permits / Approvals", "Labor Costs", "Misc"])
-        exp_amt = st.number_input("Amount (Excl. VAT)", min_value=0.0, step=100.0)
-        exp_vat = exp_amt * 0.05
-        st.write(f"VAT (5%): {exp_vat:,.2f} AED")
-        st.write(f"Total Expense: {exp_amt + exp_vat:,.2f} AED")
-        
-        if st.button("Save Expense Entry"):
-            st.success("Expense successfully logged!")
-            
     with col2:
-        st.subheader("Expense Breakdown Summary")
-        sample_exp = pd.DataFrame({
-            'Category': ['Materials', 'Subcontractor Fee', 'Site Equipment', 'Permits / Approvals'],
-            'Amount (AED)': [45000, 30000, 8500, 2500]
-        })
-        st.dataframe(sample_exp, use_container_width=True)
+        st.subheader("💾 Complete Database Backup")
+        conn = get_connection()
+        
+        # Export database tables to Excel using openpyxl engine
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            for table_name in ["transactions", "quotations", "staff_salaries", "petty_cash", "vendor_client_payments"]:
+                df_temp = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+                df_temp.to_excel(writer, sheet_name=table_name, index=False)
+        conn.close()
+
+        st.download_button(
+            label="Download Complete ERP Database (Excel)",
+            data=output.getvalue(),
+            file_name=f"Ain_Renov_ERP_Backup_{datetime.date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
