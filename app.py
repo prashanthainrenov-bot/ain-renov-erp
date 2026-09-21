@@ -3,7 +3,12 @@ import pandas as pd
 import sqlite3
 import datetime
 import io
-import xlsxwriter
+
+# Import xlsxwriter safely with fallbacks
+try:
+    import xlsxwriter
+except ImportError:
+    xlsxwriter = None
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -22,7 +27,6 @@ def migrate_db(conn):
     """Dynamically updates database schema without breaking existing tables."""
     cursor = conn.cursor()
     
-    # Required schema maps for all tables
     schemas = {
         "transactions": {
             "sl_no": "INTEGER", "vat_claimed": "TEXT", "date": "TEXT", "payment_date": "TEXT",
@@ -128,7 +132,7 @@ def init_db():
         )
     """)
 
-    # 6. Detailed Project & Vendor/Client Analysis Table
+    # 6. Project Analysis Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_analysis (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -229,7 +233,8 @@ def delete_single_row(table_name, row_id):
 def to_excel_download(df_dict):
     """Converts a dictionary of DataFrames to a downloadable Excel file in memory."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    engine = 'xlsxwriter' if xlsxwriter is not None else 'openpyxl'
+    with pd.ExcelWriter(output, engine=engine) as writer:
         for sheet_name, df in df_dict.items():
             df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
     return output.getvalue()
@@ -743,13 +748,16 @@ with tabs[7]:
     
     with col1:
         st.subheader("Database Backup")
-        with open(DB_FILE, "rb") as db_file:
-            st.download_button(
-                label="📥 Backup Database File (.db)",
-                data=db_file,
-                file_name=f"financials_backup_{datetime.date.today()}.db",
-                mime="application/x-sqlite3"
-            )
+        try:
+            with open(DB_FILE, "rb") as db_file:
+                st.download_button(
+                    label="📥 Backup Database File (.db)",
+                    data=db_file,
+                    file_name=f"financials_backup_{datetime.date.today()}.db",
+                    mime="application/x-sqlite3"
+                )
+        except Exception as e:
+            st.info("Database file initialising. Perform an import or record entry first.")
             
     with col2:
         st.subheader("Reset Database Tables")
