@@ -3,7 +3,7 @@ import pandas as pd
 import sqlite3
 import datetime
 import io
-import xlsxwriter  # Explicit import to guarantee module availability
+import xlsxwriter
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -635,3 +635,129 @@ with tabs[2]:
         )
     else:
         st.info("No transactions available for tax calculation.")
+
+# -----------------------------------------------------------------------------
+# TAB 4: QUOTATION TRACKER
+# -----------------------------------------------------------------------------
+with tabs[3]:
+    st.header("📋 Quotation Tracker")
+    df_q = load_table("quotations")
+    
+    if not df_q.empty:
+        st.dataframe(df_q, use_container_width=True)
+        st.download_button(
+            "📥 Export Quotations to Excel",
+            data=to_excel_download({"Quotations": df_q}),
+            file_name="quotations.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        st.markdown("---")
+        q_del_id = st.number_input("Enter Quotation ID to Delete", min_value=1, step=1, key="q_del")
+        if st.button("Delete Quotation"):
+            delete_single_row("quotations", q_del_id)
+            st.success(f"Quotation ID {q_del_id} deleted!")
+            st.rerun()
+    else:
+        st.info("No quotations uploaded yet.")
+
+# -----------------------------------------------------------------------------
+# TAB 5: STAFF SALARIES
+# -----------------------------------------------------------------------------
+with tabs[4]:
+    st.header("👥 Staff Salaries Management")
+    df_sal = load_table("staff_salaries")
+    
+    if not df_sal.empty:
+        st.dataframe(df_sal, use_container_width=True)
+        st.download_button(
+            "📥 Export Salaries to Excel",
+            data=to_excel_download({"Salaries": df_sal}),
+            file_name="staff_salaries.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        st.markdown("---")
+        sal_del_id = st.number_input("Enter Salary ID to Delete", min_value=1, step=1, key="sal_del")
+        if st.button("Delete Salary Record"):
+            delete_single_row("staff_salaries", sal_del_id)
+            st.success(f"Salary Record ID {sal_del_id} deleted!")
+            st.rerun()
+    else:
+        st.info("No salary records uploaded yet.")
+
+# -----------------------------------------------------------------------------
+# TAB 6: PETTY CASH LEDGER
+# -----------------------------------------------------------------------------
+with tabs[5]:
+    st.header("💵 Petty Cash Ledger")
+    df_pc = load_table("petty_cash")
+    
+    if not df_pc.empty:
+        st.dataframe(df_pc, use_container_width=True)
+        st.download_button(
+            "📥 Export Petty Cash to Excel",
+            data=to_excel_download({"Petty Cash": df_pc}),
+            file_name="petty_cash.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        st.markdown("---")
+        pc_del_id = st.number_input("Enter Petty Cash Entry ID to Delete", min_value=1, step=1, key="pc_del")
+        if st.button("Delete Petty Cash Entry"):
+            delete_single_row("petty_cash", pc_del_id)
+            st.success(f"Petty Cash Entry ID {pc_del_id} deleted!")
+            st.rerun()
+    else:
+        st.info("No petty cash transactions recorded yet.")
+
+# -----------------------------------------------------------------------------
+# TAB 7: VENDORS & CLIENTS AGEING
+# -----------------------------------------------------------------------------
+with tabs[6]:
+    st.header("💳 Vendors & Clients Ageing Tracker")
+    df_vc = load_table("vendor_client_payments")
+    
+    if not df_vc.empty:
+        st.dataframe(df_vc, use_container_width=True)
+        st.download_button(
+            "📥 Export Vendor/Client Payments to Excel",
+            data=to_excel_download({"Vendor Client Payments": df_vc}),
+            file_name="vendor_client_payments.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        st.markdown("---")
+        vc_del_id = st.number_input("Enter Record ID to Delete", min_value=1, step=1, key="vc_del")
+        if st.button("Delete Payment Record"):
+            delete_single_row("vendor_client_payments", vc_del_id)
+            st.success(f"Record ID {vc_del_id} deleted!")
+            st.rerun()
+    else:
+        st.info("No vendor or client payment records stored.")
+
+# -----------------------------------------------------------------------------
+# TAB 8: ACTION ZONE & DATA CONTROL
+# -----------------------------------------------------------------------------
+with tabs[7]:
+    st.header("⚙️ Action Zone & Master Data Control")
+    st.warning("⚠️ Caution: Actions here modify or delete database records.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Database Backup")
+        with open(DB_FILE, "rb") as db_file:
+            st.download_button(
+                label="📥 Backup Database File (.db)",
+                data=db_file,
+                file_name=f"financials_backup_{datetime.date.today()}.db",
+                mime="application/x-sqlite3"
+            )
+            
+    with col2:
+        st.subheader("Reset Database Tables")
+        table_to_clear = st.selectbox(
+            "Select Table to Wipe",
+            ["transactions", "quotations", "staff_salaries", "petty_cash", "vendor_client_payments", "project_analysis"]
+        )
+        if st.button(f"Wipe All Records in '{table_to_clear}'"):
+            clear_table(table_to_clear)
+            st.success(f"Table '{table_to_clear}' cleared successfully!")
+            st.rerun()
