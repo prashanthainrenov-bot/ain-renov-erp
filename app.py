@@ -18,7 +18,7 @@ def get_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
 def migrate_db(conn):
-    """Dynamically updates database schema without breaking existing tables."""
+    """Dynamically patches existing SQLite tables with any missing columns."""
     cursor = conn.cursor()
     
     # Check and update 'transactions' table
@@ -230,49 +230,48 @@ def delete_single_row(table_name, row_id):
     conn.commit()
     conn.close()
 
-# --- SIDEBAR & TEMPLATE DOWNLOADERS ---
+# --- SIDEBAR & TEMPLATE GENERATORS (NO EXTRA ENGINES REQUIRED) ---
 st.sidebar.title("💼 Ain Renov ERP")
 st.sidebar.markdown("---")
 
-st.sidebar.subheader("📥 Download Blank Excel Templates")
+st.sidebar.subheader("📥 Download Blank CSV Templates")
 
-def generate_template_excel(template_type):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        if template_type == "Financials":
-            df = pd.DataFrame(columns=[
-                'SL NO', 'YES/NO', 'DATE', 'PAYMENT DATE', 'BILL/ INVOICE NUMBER',
-                'PARTICULARS', 'PROJECT NAME', 'PAYMENT MODE (Cash/Bank)', 'IS CASH (YES/NO)',
-                'IS PETTY CASH (YES/NO)', 'INCOME_AMOUNT', 'INCOME_VAT', 'INCOME_NET',
-                'EXPENSE_AMOUNT', 'EXPENSE_VAT', 'EXPENSE_NET'
-            ])
-        elif template_type == "Quotations":
-            df = pd.DataFrame(columns=[
-                'Client Name', 'Project Name', 'Quotation Date', 'Expected Closure Date',
-                'Amount', 'Status', 'Feedback', 'Reminder Date'
-            ])
-        elif template_type == "Salaries":
-            df = pd.DataFrame(columns=[
-                'Employee Name', 'Month/Year', 'Base Salary', 'Allowances',
-                'Deductions', 'Net Paid Amount', 'Payment Date', 'Remarks'
-            ])
-        elif template_type == "Petty Cash":
-            df = pd.DataFrame(columns=[
-                'Date', 'Description', 'Cash In', 'Cash Out', 'Handed To', 'Receipt No'
-            ])
-        elif template_type == "Vendors/Clients":
-            df = pd.DataFrame(columns=[
-                'Type', 'Party Name', 'Invoice No', 'Invoice Date', 'Due Date',
-                'Total Amount', 'Paid Amount', 'Due Amount', 'Status'
-            ])
-        df.to_excel(writer, index=False, sheet_name='Template')
-    return output.getvalue()
+def generate_template_csv(template_type):
+    output = io.StringIO()
+    if template_type == "Financials":
+        df = pd.DataFrame(columns=[
+            'SL NO', 'YES/NO', 'DATE', 'PAYMENT DATE', 'BILL/ INVOICE NUMBER',
+            'PARTICULARS', 'PROJECT NAME', 'PAYMENT MODE (Cash/Bank)', 'IS CASH (YES/NO)',
+            'IS PETTY CASH (YES/NO)', 'INCOME_AMOUNT', 'INCOME_VAT', 'INCOME_NET',
+            'EXPENSE_AMOUNT', 'EXPENSE_VAT', 'EXPENSE_NET'
+        ])
+    elif template_type == "Quotations":
+        df = pd.DataFrame(columns=[
+            'Client Name', 'Project Name', 'Quotation Date', 'Expected Closure Date',
+            'Amount', 'Status', 'Feedback', 'Reminder Date'
+        ])
+    elif template_type == "Salaries":
+        df = pd.DataFrame(columns=[
+            'Employee Name', 'Month/Year', 'Base Salary', 'Allowances',
+            'Deductions', 'Net Paid Amount', 'Payment Date', 'Remarks'
+        ])
+    elif template_type == "Petty Cash":
+        df = pd.DataFrame(columns=[
+            'Date', 'Description', 'Cash In', 'Cash Out', 'Handed To', 'Receipt No'
+        ])
+    elif template_type == "Vendors/Clients":
+        df = pd.DataFrame(columns=[
+            'Type', 'Party Name', 'Invoice No', 'Invoice Date', 'Due Date',
+            'Total Amount', 'Paid Amount', 'Due Amount', 'Status'
+        ])
+    df.to_csv(output, index=False)
+    return output.getvalue().encode('utf-8')
 
-st.sidebar.download_button("Financials Template", generate_template_excel("Financials"), "financials_template.xlsx")
-st.sidebar.download_button("Quotations Template", generate_template_excel("Quotations"), "quotations_template.xlsx")
-st.sidebar.download_button("Salaries Template", generate_template_excel("Salaries"), "salaries_template.xlsx")
-st.sidebar.download_button("Petty Cash Template", generate_template_excel("Petty Cash"), "petty_cash_template.xlsx")
-st.sidebar.download_button("Vendors/Clients Template", generate_template_excel("Vendors/Clients"), "vendors_clients_template.xlsx")
+st.sidebar.download_button("Financials Template", generate_template_csv("Financials"), "financials_template.csv", "text/csv")
+st.sidebar.download_button("Quotations Template", generate_template_csv("Quotations"), "quotations_template.csv", "text/csv")
+st.sidebar.download_button("Salaries Template", generate_template_csv("Salaries"), "salaries_template.csv", "text/csv")
+st.sidebar.download_button("Petty Cash Template", generate_template_csv("Petty Cash"), "petty_cash_template.csv", "text/csv")
+st.sidebar.download_button("Vendors/Clients Template", generate_template_csv("Vendors/Clients"), "vendors_clients_template.csv", "text/csv")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📤 Upload Data File")
@@ -493,7 +492,7 @@ with tabs[0]:
             st.success(f"Transaction ID {tx_del_id} removed!")
             st.rerun()
     else:
-        st.info("No financial records found. Download a template from the sidebar, fill it, and upload.")
+        st.info("No financial records found. Download a CSV template from the sidebar, fill it, and upload.")
 
 # -----------------------------------------------------------------------------
 # TAB 2: BALANCE SHEET & PETTY CASH
